@@ -1,0 +1,8 @@
+.temp/
+node_modules/
+lib/
+*.tgz
+.env
+.env.*
+*.log
+.DS_Store

@@ -1,0 +1,15 @@
+# 补丁按整行配置替换；明确保留官方 HTTP 抓取选择，不覆盖模型工具。
+- insert:
+    - id: web-search
+      name: dsh-web-search
+      config:
+        allowBillable: false
+        timeoutMs: 25000
+        maxResponseBytes: 5242880
+        maxChars: 24000
+        retries: 1
+
+- id: web
+  config:
+    searchProvider: free-first
+    fetchProvider: http
