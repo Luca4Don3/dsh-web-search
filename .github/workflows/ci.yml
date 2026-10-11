@@ -2,7 +2,7 @@ name: 离线验证
 
 on:
   push:
-    branches: [main]
+    branches: [main, "feat/**"]
   pull_request:
 
 permissions:
@@ -23,5 +23,7 @@ jobs:
         run: npm run check
       - name: 离线核心与官方运行时验证
         run: npm test
+      - name: 编译产物必须随源码提交且保持一致
+        run: npm run check:artifacts
       - name: 验证可打包文件
         run: npm pack --dry-run

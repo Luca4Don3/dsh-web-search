@@ -19,8 +19,8 @@ export interface StateEntry {
   cleared?: boolean;
 }
 export interface QuotaState { version: 1; salt: string; entries: StateEntry[] }
-export type StoreResult = { status: "ok"; state: QuotaState } | { status: "missing" } | { status: "unavailable" };
-export type SaveResult = "saved" | "unavailable";
+export type StoreResult = { status: "ok"; state: QuotaState } | { status: "missing" } | { status: "cancelled" } | { status: "unavailable"; reason?: "unsupported_platform" };
+export type SaveResult = "saved" | "unavailable" | "cancelled";
 export interface StateStore {
   load(signal?: AbortSignal): Promise<StoreResult>;
   save(state: QuotaState, signal?: AbortSignal): Promise<SaveResult>;
@@ -33,7 +33,8 @@ const MAX_BYTES = 128 * 1024;
 const MAX_ENTRIES = 512;
 const LOCK_WAIT_MS = 300;
 
-function abortCheck(signal?: AbortSignal): void { if (signal?.aborted) throw new Error(SAFE); }
+class StateCancelled extends Error { constructor() { super("状态操作已取消"); } }
+function abortCheck(signal?: AbortSignal): void { if (signal?.aborted) throw new StateCancelled(); }
 function owner(): number | undefined { return process.getuid?.(); }
 function safeMode(stat: Awaited<ReturnType<typeof lstat>>): boolean {
   return stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && owner() !== undefined && stat.uid === owner() && (Number(stat.mode) & 0o077) === 0;
@@ -183,7 +184,7 @@ async function acquireLock(path: string, signal?: AbortSignal): Promise<HeldLock
       if (Date.now() >= end) throw new Error(SAFE);
       await new Promise<void>((resolveDelay, reject) => {
         const timer = setTimeout(() => { signal?.removeEventListener("abort", stop); resolveDelay(); }, 10);
-        const stop = (): void => { clearTimeout(timer); signal?.removeEventListener("abort", stop); reject(new Error(SAFE)); };
+        const stop = (): void => { clearTimeout(timer); signal?.removeEventListener("abort", stop); reject(new StateCancelled()); };
         signal?.addEventListener("abort", stop, { once: true });
         if (signal?.aborted) stop();
       });
@@ -211,34 +212,59 @@ function mergeEntry(oldEntry: StateEntry | undefined, incoming: StateEntry): Sta
   const latest = incoming.updatedAt > oldEntry.updatedAt ? incoming : oldEntry;
   return { ...latest, failures: Math.max(oldEntry.failures, incoming.failures), until: Math.max(oldEntry.until, incoming.until), lastAt: Math.max(oldEntry.lastAt, incoming.lastAt) };
 }
-async function atomicWrite(path: string, state: QuotaState): Promise<void> {
+async function atomicWrite(path: string, state: QuotaState, signal?: AbortSignal): Promise<void> {
+  abortCheck(signal);
   const tmp = join(dirname(path), `.dsh-state-tmp-${process.pid}-${randomBytes(12).toString("hex")}`);
   const handle = await open(tmp, "wx", 0o600);
-  try { await handle.writeFile(JSON.stringify(state), "utf8"); await handle.sync(); }
-  finally { await handle.close(); }
-  const stat = await lstat(tmp);
-  if (!safeMode(stat)) throw new Error(SAFE);
-  await rename(tmp, path);
+  let created: Awaited<ReturnType<typeof lstat>> | undefined;
+  let renamed = false;
+  try {
+    created = await handle.stat();
+    abortCheck(signal);
+    await handle.writeFile(JSON.stringify(state), "utf8");
+    abortCheck(signal);
+    await handle.sync();
+    await handle.close();
+    abortCheck(signal);
+    const stat = await lstat(tmp);
+    if (!safeMode(stat) || stat.dev !== created.dev || stat.ino !== created.ino) throw new Error(SAFE);
+    abortCheck(signal);
+    await rename(tmp, path);
+    renamed = true;
+  } finally {
+    await handle.close().catch(() => undefined);
+    if (!renamed && created) {
+      // 仅清理由本次排他创建且身份、归属、权限仍匹配的临时文件。
+      const stat = await lstat(tmp).catch(() => undefined);
+      if (stat && safeMode(stat) && stat.dev === created.dev && stat.ino === created.ino) await unlink(tmp);
+    }
+  }
 }
 
 /** 显式路径才会访问磁盘；仅认可本项目协议文件，绝不 chmod 或追随链接。 */
-export function createPrivateStateStore(directory: string): StateStore {
+export function createPrivateStateStore(directory: string, options: { platform?: NodeJS.Platform } = {}): StateStore {
   const base = resolve(directory);
   const statePath = join(base, "state.json");
   const lockPath = join(base, ".quota-state.lock");
+  const unsupported = (options.platform ?? process.platform) === "win32" || owner() === undefined;
   let blocked = false;
   const withLock = async <T>(signal: AbortSignal | undefined, fn: () => Promise<T>): Promise<T> => {
+    abortCheck(signal);
     await ensureDirectory(base);
+    abortCheck(signal);
     const lock = await acquireLock(lockPath, signal);
     try { abortCheck(signal); return await fn(); }
     finally { await releaseLock(lockPath, lock); }
   };
-  const readState = async (): Promise<QuotaState | undefined> => {
+  const readState = async (signal?: AbortSignal): Promise<QuotaState | undefined> => {
+    abortCheck(signal);
     const directory = await opendir(base);
     for await (const entry of directory) {
+      abortCheck(signal);
       if (!["state.json", ".quota-state.lock", ".quota-state.lock.recovery"].includes(entry.name)) throw new Error(SAFE);
     }
     const bytes = await readSecure(statePath, MAX_BYTES);
+    abortCheck(signal);
     if (bytes === undefined) return undefined;
     let value: unknown;
     try { value = JSON.parse(bytes.toString("utf8")); } catch { throw new Error(SAFE); }
@@ -248,24 +274,33 @@ export function createPrivateStateStore(directory: string): StateStore {
   };
   return {
     async load(signal) {
+      if (signal?.aborted) return { status: "cancelled" };
+      if (unsupported) return { status: "unavailable", reason: "unsupported_platform" };
+      if (blocked) return { status: "unavailable" };
       try {
         const state = await withLock(signal, async () => {
-          const loaded = await readState();
+          const loaded = await readState(signal);
           if (loaded) return loaded;
           const initial: QuotaState = { version: 1, salt: randomBytes(32).toString("base64"), entries: [] };
-          await atomicWrite(statePath, initial);
+          await atomicWrite(statePath, initial, signal);
           return initial;
         });
+        abortCheck(signal);
         return { status: "ok", state };
-      } catch { blocked = true; return { status: "unavailable" }; }
+      } catch (error) {
+        if (error instanceof StateCancelled) return { status: "cancelled" };
+        blocked = true;
+        return { status: "unavailable" };
+      }
     },
     async save(next, signal) {
-      if (blocked) return "unavailable";
+      if (signal?.aborted) return "cancelled";
+      if (blocked || unsupported) return "unavailable";
       try {
         const checked = validateState(next);
         if (!checked) return "unavailable";
         return await withLock(signal, async () => {
-          const current = await readState();
+          const current = await readState(signal);
           if (!current || current.salt !== checked.salt) return "unavailable";
           const merged = new Map(current.entries.map((entry) => [`${entry.scope}:${entry.reason}`, entry]));
           for (const entry of checked.entries) {
@@ -273,10 +308,10 @@ export function createPrivateStateStore(directory: string): StateStore {
             merged.set(key, mergeEntry(merged.get(key), entry));
           }
           if (merged.size > MAX_ENTRIES) return "unavailable";
-          await atomicWrite(statePath, { version: 1, salt: checked.salt, entries: [...merged.values()] });
+          await atomicWrite(statePath, { version: 1, salt: checked.salt, entries: [...merged.values()] }, signal);
           return "saved";
         });
-      } catch { return "unavailable"; }
+      } catch (error) { return error instanceof StateCancelled ? "cancelled" : "unavailable"; }
     },
   };
 }

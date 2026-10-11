@@ -387,7 +387,7 @@ export function createSearchEngine(options: SearchOptions = {}, deps: SearchDepe
       const flush = await wait(quota.flush(context.signal), context);
       context.check();
       if (!outcome) throw new SearchError("SEARCH_FAILED");
-      const warning = flush === "degraded" ? "冷却状态未能安全保存；本次仅在当前进程有效。" : quota.warning;
+      const warning = quota.warning ?? (flush === "degraded" ? "冷却状态未能安全保存；本次仅在当前进程有效。" : undefined);
       return buildResult(outcome, settings.maxChars, secrets, warning);
     } catch (error) {
       if (error instanceof SearchError) throw error;
