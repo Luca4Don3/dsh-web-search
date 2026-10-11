@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-search",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "DSH 独立聚合搜索提供方：匿名优先、费用授权、额度预检与有界取消",
   "type": "module",
   "main": "./lib/index.js",
@@ -14,6 +14,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
+    "check:artifacts": "node tests/check-artifacts.mjs",
     "test": "npm run build && node --test tests/*.test.mjs",
     "smoke": "npm run build && node tests/smoke.mjs"
   },

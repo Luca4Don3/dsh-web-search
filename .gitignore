@@ -1,6 +1,5 @@
 .temp/
 node_modules/
-lib/
 *.tgz
 .env
 .env.*
