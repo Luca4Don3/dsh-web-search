@@ -1,0 +1,27 @@
+name: 离线验证
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: 安装局部依赖且禁止依赖脚本
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: 严格类型检查
+        run: npm run check
+      - name: 离线核心与官方运行时验证
+        run: npm test
+      - name: 验证可打包文件
+        run: npm pack --dry-run
