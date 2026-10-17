@@ -1,6 +1,6 @@
 # DSH 搜索插件
 
-`dsh-web-search@0.1.1`：匿名优先的独立搜索插件，兼容目标为 `DSH 0.2.0-rc.2`，需要 `Node.js >=24`。
+`dsh-web-search@0.1.2`：匿名优先的独立搜索插件，兼容目标为 `DSH 0.2.1-rc.2`，需要 `Node.js >=24`。
 
 注册聚合提供方 `free-first`，使用官方 `web_search`，不替换模型工具或 `web_fetch`。
 
