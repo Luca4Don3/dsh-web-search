@@ -22,7 +22,7 @@ import { clampResults, createSearchEngine, renderOutcome, redactSecrets } from "
 import { getProviderMetadata, isProviderId, PROVIDER_IDS } from "../search/registry.js";
 import { readMaxResponseBytes } from "../shared/response-body.js";
 import { readSearchRequestConfig } from "../search/config.js";
-import { spillFullText } from "../search/spill-store.js";
+import { discardSpillFile, spillFullText } from "../search/spill-store.js";
 import type { SearchSource as WebSource } from "../search/contracts.js";
 
 export type { WebSource };
@@ -57,9 +57,48 @@ function createAbortError(): DOMException {
 	return new DOMException("web_search aborted", "AbortError");
 }
 
+/**
+ * 用剩余预算约束只受外部取消影响的异步阶段（凭据解析）。
+ *
+ * 与内核的 `withinBudget` 同义：先到期者胜出，取消优先于预算；
+ * 输掉竞争的一方继续在后台推进，其迟到拒绝必须被消费。
+ */
+async function withinDeadline<T>(promise: Promise<T>, totalMs: number, signal?: AbortSignal): Promise<T> {
+	if (signal?.aborted === true) {
+		void promise.catch(() => undefined);
+		throw createAbortError();
+	}
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let onAbort: (() => void) | undefined;
+	const expire = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => reject(new Error("整次搜索的总时间预算已用尽 [budget_exhausted]")), totalMs);
+		onAbort = () => reject(createAbortError());
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+	try {
+		return await Promise.race([promise, expire]);
+	} catch (error) {
+		void promise.catch(() => undefined);
+		throw error;
+	} finally {
+		clearTimeout(timer);
+		if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+	}
+}
+
 /** 取消状态可在异步等待期间改变，每次检查都重新读取。 */
 function isAborted(signal?: AbortSignal): boolean {
 	return signal?.aborted === true;
+}
+
+/**
+ * 把内核的持久化警告翻译成面向用户的固定文案。
+ *
+ * 预算耗尽导致的跳过与写盘失败要能区分：前者是"本次没写"，后者是"写不进去"。
+ */
+function quotaWarningText(warnings: readonly string[]): string {
+	if (warnings.includes("QUOTA_STATE_FLUSH_TIMEOUT")) return "额度状态写入跳过：整次调用总时间预算已用尽";
+	return `额度状态写入退化：${warnings.join(", ")}`;
 }
 
 /** Pi 端的默认状态目录：`$PI_AGENT_DIR/config/web-search`。 */
@@ -130,8 +169,10 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 			const maxResponseBytes = readMaxResponseBytes();
 
 			// 未授权计费时绝不读取密钥环境变量或系统密钥库。
+			// 凭据读取必须在整次调用的总预算之内：系统密钥库可能极慢，
+			// 不能解析完成之后才重新计时，否则配置的预算形同虚设。
 			const keys = routing.allowBillable
-				? await resolvePlanKeys(provider, store, signal)
+				? await withinDeadline(resolvePlanKeys(provider, store, signal), requestConfig.totalTimeoutMs, signal)
 				: emptyPlanKeys();
 			if (isAborted(signal)) throw createAbortError();
 			const secrets = BACKENDS.map((backend) => keys[backend]);
@@ -155,7 +196,9 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 				totalTimeoutMs: requestConfig.totalTimeoutMs,
 				maxResponseBytes,
 				retries: requestConfig.retries,
-				stateDirectory: ensureStateDirectory(piStateDirectory()),
+				// 只有真正走磁盘持久化时才创建宿主目录：
+				// 注入内存管理器或测试替身时不应产生任何文件系统副作用。
+				...(injectedTestBoundary ? {} : { stateDirectory: ensureStateDirectory(piStateDirectory()) }),
 				...(routing.cooldownOverrideMs === undefined ? {} : { cooldownOverrideMs: routing.cooldownOverrideMs }),
 			}, {
 				resolveKey: async (backend) => keys[backend],
@@ -174,6 +217,8 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 					{ query, maxResults: numResults, provider },
 					(text) => spillFullText(text),
 					signal,
+					// 落盘被取消时后台可能仍会完成写入，按路径回收那份残留文件。
+					(path) => { void discardSpillFile(path).catch(() => undefined); },
 				);
 				if (isAborted(signal)) throw createAbortError();
 
@@ -216,7 +261,7 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 						truncated,
 						attemptCount: outcome.attempts,
 						quotaPersistence: outcome.quotaPersistence,
-						...(outcome.warnings.length > 0 ? { quotaWarning: `额度状态写入退化：${outcome.warnings.join(", ")}` } : {}),
+						...(outcome.warnings.length > 0 ? { quotaWarning: quotaWarningText(outcome.warnings) } : {}),
 						...(fallbackReason === undefined ? {} : { fallbackReason }),
 						...(outcome.spillPath === undefined ? {} : { fullTextPath: outcome.spillPath, fullTextComplete: outcome.spillComplete === true }),
 						...(outcome.spillFailed === true ? { fullTextWarning: "正文已截断，完整正文落盘失败。" } : {}),

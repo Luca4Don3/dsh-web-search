@@ -197,7 +197,9 @@ function validateOptions(options: EngineOptions): Required<Pick<SearchOptions, "
 	if (options.allowBillable === true && options.strategy === "key-first") {
 		throw new SearchError("INVALID_CONFIG");
 	}
-	const timeoutMs = int(options.timeoutMs, 25_000, 1, 60_000, "timeoutMs");
+	// 上限与 PI_WEB_SEARCH_TIMEOUT_MS 的接受范围一致（120000），避免外层放行的
+	// 合法值在内核处被二次拒绝；下限保持宽松，内核作为库允许更短的测试预算。
+	const timeoutMs = int(options.timeoutMs, 25_000, 1, 120_000, "timeoutMs");
 	// 未显式给出总预算时，按 DSH 历史语义让单请求预算同时约束整次调用；
 	// 显式设置 totalTimeoutMs 时才允许整次调用比单请求更长。
 	const totalFallback = Math.min(600_000, Math.max(1, timeoutMs));
@@ -256,7 +258,7 @@ export type SpillWriter = (text: string) => Promise<{ path: string; complete: bo
 /** 内核实例：在公开契约之外提供宿主诊断与呈现所需的附加能力。 */
 export interface DetailedSearchEngine extends SearchEngine {
 	searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult>;
-	searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }>;
+	searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal, cleanupSpill?: (path: string) => void): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }>;
 }
 
 export function createSearchEngine(options: EngineOptions = {}, deps: SearchDependencies = {}): DetailedSearchEngine {
@@ -566,7 +568,7 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 		return { text, sources };
 	}
 
-	async function runSearch(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult> {
+	async function runSearch(request: SearchRequest, signal?: AbortSignal, spill?: SpillWriter, cleanupSpill?: (path: string) => void): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }> {
 		if (disposed) throw new SearchError("DISPOSED");
 		if (!request || typeof request !== "object" || typeof request.query !== "string") throw new SearchError("INVALID_REQUEST");
 		const query = request.query.trim();
@@ -611,16 +613,18 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 						...(source.snippet === undefined ? {} : { snippet: redactSecrets(source.snippet, secrets) }),
 						...(source.publishedAt === undefined ? {} : { publishedAt: redactSecrets(source.publishedAt, secrets) }),
 					}));
-					// 持久化是收尾动作：写不进去只提示，不丢弃已取得的结果。
+					// 持久化是收尾动作：写不进去或写不完都只提示，绝不丢弃已取得的结果。
+					// 只有外部取消仍保持取消语义——那是调用方的明确意图。
 					try {
 						await withinBudget(Promise.resolve().then(() => quota.flush()), budget, controller.signal);
 					} catch (error) {
-						if (error instanceof BudgetExhaustedError || isAborted(controller.signal)) throw error;
-						warnings.push("QUOTA_STATE_IO_UNAVAILABLE");
+						if (isAborted(controller.signal)) throw error;
+						// 预算耗尽意味着"这笔状态没写完"，不是"这次搜索失败"。
+						warnings.push(error instanceof BudgetExhaustedError ? "QUOTA_STATE_FLUSH_TIMEOUT" : "QUOTA_STATE_IO_UNAVAILABLE");
 					}
 					const snapshot = quota.snapshot();
 					if (snapshot.persistence === "degraded") warnings.push(snapshot.persistenceReason ?? "QUOTA_STATE_IO_UNAVAILABLE");
-					return {
+					const outcome: SearchOutcomeResult = {
 						backend: step.backend,
 						channel: step.channel,
 						accessTier: step.channel === "free" ? "anonymous" : "billable",
@@ -632,6 +636,30 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 						quotaPersistence: snapshot.persistence,
 						truncated: result.text.length > settings.maxChars,
 					};
+					// 落盘与搜索共用同一截止时间、取消信号与活动集合：
+					// 阻塞的写盘会被预算或取消中断，且不会被误判为搜索失败。
+					if (spill === undefined || text.length <= settings.maxChars) return outcome;
+					// 落盘 promise 只启动一次，超时/取消后仍要把它取回并清理残留文件：
+					// 直接丢弃会让后台写入完成并在磁盘上留下本次结果。
+					const writing = Promise.resolve().then(() => spill(text));
+					let written: { path: string; complete: boolean } | undefined;
+					try {
+						written = await withinBudget(writing, budget, controller.signal);
+						return { ...outcome, spillPath: written.path, spillComplete: written.complete };
+					} catch (error) {
+						// 落盘被中断后，后台写入仍可能完成并留下文件。
+						// 取消时先给一次有限等待让写盘自己回滚（通常立即返回），
+						// 超时或关闭导致没赶上时再注册异步回收——两者都不会阻塞取消。
+						if (isAborted(controller.signal)) {
+							await Promise.race([
+								writing.then((late) => cleanupSpill?.(late.path)).catch(() => undefined),
+								new Promise<void>((resolve) => setTimeout(resolve, 50)),
+							]);
+							throw error;
+						}
+						void writing.then((late) => cleanupSpill?.(late.path)).catch(() => undefined);
+						return { ...outcome, spillFailed: true };
+					}
 				} catch (error) {
 					checkAborted(controller.signal);
 					// 预算耗尽立即结束整次调用：不再尝试任何后续通道，也不转成"全部不可用"。
@@ -696,16 +724,11 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 		 * 落盘是宿主呈现策略而不是搜索语义：DSH 直接截断，Pi 需要保留完整正文供模型
 		 * `read`。放进内核是为了让两个宿主共用同一条执行路径，而不是各自再写一遍编排。
 		 */
-		async searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }> {
-			const result = await runSearch(request, signal);
-			if (result.text.length <= settings.maxChars) return result;
-			try {
-				const written = await spill(result.text);
-				return { ...result, spillPath: written.path, spillComplete: written.complete };
-			} catch {
-				// 落盘失败不影响已经取得的结果，但必须让宿主能给出提示。
-				return { ...result, spillFailed: true };
-			}
+		async searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal, cleanupSpill?: (path: string) => void): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }> {
+			// 落盘在 runSearch 内部完成：与搜索共用同一个总预算、取消信号与活动集合，
+			// 因此取消或关闭能及时结束等待，而不是留在预算之外。
+			// 被中断的落盘仍会在后台完成，cleanupSpill 负责回收那份残留文件。
+			return runSearch(request, signal, spill, cleanupSpill);
 		},
 		async search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResult> {
 			const result = await runSearch(request, signal);

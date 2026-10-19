@@ -12,7 +12,7 @@ export declare function expandSecrets(secrets: readonly (string | undefined)[]):
 /**
  * 替换全部命中项。
  *
- * 接受原始密钥或已展开的变体：调用方可以只传原始密钥（这里再展开），
- * 也可以传入 {@link expandSecrets} 的结果以避免重复计算。
+ * 接受原始密钥：字面量与编码形态都在这里展开。百分号转义的十六进制
+ * 字母大小写不敏感（`%2b` 与 `%2B` 等价），其余字符保持大小写敏感。
  */
 export declare function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string;

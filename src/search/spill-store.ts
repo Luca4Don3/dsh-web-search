@@ -5,7 +5,7 @@ import { constants, type Stats } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, unlink } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join, parse, sep } from "node:path";
+import { basename, join, parse, sep } from "node:path";
 
 export const SPILL_MAX_BYTES = 2 * 1024 * 1024;
 const KEEP_FILES = 20;
@@ -44,6 +44,25 @@ async function discardCreatedFile(file: string, created: Stats | undefined, uid:
 }
 
 /** 每次操作重新锚定系统临时根，允许 macOS /var 等系统符号链接。 */
+/**
+ * 删除本次落盘产生的文件。
+ *
+ * 只删除严格命名、属于当前用户、私有权限且为单链接的普通文件；
+ * 任何校验不通过都保持原样。用于"落盘被取消但后台已完成"的回收路径。
+ */
+export async function discardSpillFile(path: string): Promise<void> {
+	if (process.getuid === undefined) return;
+	const uid = process.getuid();
+	if (!FILE_NAME.test(basename(path))) return;
+	try {
+		const stat = await lstat(path);
+		if (!privateFile(stat, uid) || !stat.isFile()) return;
+		await unlink(path);
+	} catch {
+		// 清理是尽力而为，不覆盖调用方正在处理的错误。
+	}
+}
+
 export async function spillFullText(text: string, temporaryRoot = tmpdir()): Promise<SpillResult> {
 	if (process.getuid === undefined) refuse();
 	const uid = process.getuid();

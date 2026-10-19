@@ -77,7 +77,7 @@ export type SpillWriter = (text: string) => Promise<{
 /** 内核实例：在公开契约之外提供宿主诊断与呈现所需的附加能力。 */
 export interface DetailedSearchEngine extends SearchEngine {
     searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult>;
-    searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal): Promise<SearchOutcomeResult & {
+    searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal, cleanupSpill?: (path: string) => void): Promise<SearchOutcomeResult & {
         spillPath?: string;
         spillComplete?: boolean;
         spillFailed?: boolean;

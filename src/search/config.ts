@@ -19,6 +19,7 @@ function readInteger(env: NodeJS.ProcessEnv, name: string, fallback: number, min
 export function readSearchRequestConfig(env: NodeJS.ProcessEnv = process.env): SearchRequestConfig {
 	return {
 		retries: readInteger(env, "PI_WEB_SEARCH_RETRIES", 1, 0, 3),
+		// 与内核的接受范围保持一致：外层放行的值不应在内核处被二次拒绝。
 		timeoutMs: readInteger(env, "PI_WEB_SEARCH_TIMEOUT_MS", 25_000, 100, 120_000),
 		totalTimeoutMs: readInteger(env, "PI_WEB_SEARCH_TOTAL_TIMEOUT_MS", 90_000, 1_000, 600_000),
 	};
