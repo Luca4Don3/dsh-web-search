@@ -1,4 +1,5 @@
 .temp/
+tests/.temp/
 node_modules/
 *.tgz
 .env

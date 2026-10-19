@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createSearchEngine } from "../lib/core/index.js";
-import { QuotaManager, parseUsageBody } from "../lib/core/quota.js";
+import { createSearchEngine } from "../lib/search/engine.js";
+import { QuotaManager, parseUsageBody } from "../lib/compat/quota.js";
 
 const result = (provider = "tavily") => provider === "tavily"
   ? new Response(JSON.stringify({ results: [{ url: "https://example.test/", title: "结果", content: "正文" }] }))
@@ -138,7 +138,7 @@ test("密钥严格验证但不截断，允许安全可打印 ASCII 与最长 409
   const encoded = encodeURIComponent(key).replace(/%[0-9A-F]{2}/gu, (part) => part.toLowerCase());
   const engine = createSearchEngine({ allowBillable: true, retries: 0 }, {
     resolveKey: async (provider) => provider === "exa" ? key : undefined,
-    fetch: async () => new Response(JSON.stringify({ result: { content: [{ text: `Title: 标题\nURL: https://example.test/\nHighlights:\n${encoded}` }] } })),
+    fetch: async () => new Response(JSON.stringify({ result: { content: [{ type: "text", text: `Title: 标题\nURL: https://example.test/\nHighlights:\n${encoded}` }] } })),
   });
   try { assert.equal(JSON.stringify(await engine.search({ query: "特殊字符" })).includes(encoded), false); }
   finally { await engine.dispose(); }

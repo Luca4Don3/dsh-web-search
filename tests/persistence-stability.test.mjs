@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, mkdtemp, readFile, writeFile, unlink, access } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile, unlink, access } from "node:fs/promises";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { QuotaManager } from "../lib/core/quota.js";
-import { createPrivateStateStore } from "../lib/core/state.js";
+import { QuotaManager } from "../lib/compat/quota.js";
+import { createPrivateStateStore } from "../lib/compat/state.js";
 
 async function fixture() { await mkdir(".temp/persistence-stability", { recursive: true }); return mkdtemp(join(process.cwd(), ".temp/persistence-stability/state-")); }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -81,7 +81,7 @@ test("初始化采用磁盘盐值后保留已确认的内存冷却与密钥作�
 
 test("429 后搜索取消仍独立落盘，进程被终止后重启可恢复", async () => {
   const directory = await fixture();
-  const module = new URL("../lib/core/index.js", import.meta.url).href;
+  const module = new URL("../lib/search/engine.js", import.meta.url).href;
   const script = `import {createSearchEngine} from ${JSON.stringify(module)};
     const controller=new AbortController();
     const engine=createSearchEngine({stateDirectory:process.argv[1],retries:0},{env:{},fetch:async(url)=>{
@@ -94,16 +94,26 @@ test("429 后搜索取消仍独立落盘，进程被终止后重启可恢复", a
   try {
     const message = await new Promise((resolve, reject) => { const timer=setTimeout(()=>reject(new Error("子进程超时")),3000); child.once("message",value=>{clearTimeout(timer);resolve(value);}); child.once("error",reject); });
     assert.equal(message, "已取消");
+    // 合并后的内核按作用域文件持久化（scope-<hmac>-<reason>.json），
+    // 不再写单一 state.json；断言随之改为“存在 exa 的 rate_limited 作用域文件”。
     let saved = false;
     for (let index = 0; index < 100; index++) {
-      try { const state = JSON.parse(await readFile(join(directory, "state.json"), "utf8")); saved = state.entries.some((entry) => entry.backend === "exa" && entry.reason === "rate_limited" && !entry.cleared); } catch { /* 等待独立写入，不打印私有状态。 */ }
+      try {
+        const names = await readdir(directory);
+        saved = names.some((name) => /^scope-[a-f0-9]{64}-rate_limited\.json$/u.test(name));
+      } catch { /* 等待独立写入，不打印私有状态。 */ }
       if (saved) break;
       await delay(10);
     }
     assert.equal(saved, true, "不能依赖正常卸载才落盘");
   } finally { const closed=new Promise(resolve=>child.once("close",resolve)); child.kill("SIGKILL"); await closed; }
-  const manager = new QuotaManager({ stateDirectory: directory }, {}); await manager.initialize();
-  assert.equal(manager.cooldown("exa", "anonymous", undefined), "rate_limited"); manager.dispose();
+  // 重启后必须能从新的按作用域存储恢复冷却：改用合并后的内核验证，
+  // compat 层只保留旧接口签名，不再承载新的持久化格式。
+  const { createQuotaManager } = await import("../lib/quota/core.js");
+  const { createPrivateQuotaStateStore } = await import("../lib/quota/state-store.js");
+  const restored = createQuotaManager({ stateStore: createPrivateQuotaStateStore(directory) });
+  await restored.initialize();
+  assert.equal(restored.getCooldown("exa", "anonymous", undefined)?.reason, "rate_limited");
 });
 
 test("不合作磁盘写入只保留单个工作项，等待有界且消费者取消不撤销写入", async () => {

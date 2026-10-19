@@ -3,7 +3,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const core = await import(new URL("../lib/core/index.js", import.meta.url));
+const core = await import(new URL("../lib/search/engine.js", import.meta.url));
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const mcp = () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "标题\nURL: https://ok.example/page" }] } }));
 const tavily = () => new Response(JSON.stringify({ results: [{ url: "https://tavily.example/page", title: "结果" }] }));

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Context } from "@deepseek-ai/cordis";
 import WebRuntime from "@deepseek-ai/dsh-web";
 import { createPlugin, FreeFirstProvider, defaultStateDirectory } from "../lib/index.js";
-import { createSearchEngine } from "../lib/core/index.js";
+import { createSearchEngine } from "../lib/search/engine.js";
 
 const hit = "Title: 离线文档\nURL: https://example.test/docs\nHighlights:\n中文摘要";
 const reply = () => new Response(JSON.stringify({ result: { content: [{ type: "text", text: hit }] } }));
