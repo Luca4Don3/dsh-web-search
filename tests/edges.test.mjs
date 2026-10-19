@@ -6,9 +6,9 @@ import { Agent, fetch } from "undici";
 import { mkdir, mkdtemp, writeFile, readFile, lstat, link } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { createSearchEngine, readResponseTextLimited, parseMcpResponse } from "../lib/core/index.js";
-import { parseProviderResponse } from "../lib/core/protocol.js";
-import { createPrivateStateStore } from "../lib/core/state.js";
+import { createSearchEngine, readResponseTextLimited, parseMcpResponse } from "../lib/search/engine.js";
+import { parseProviderResponse } from "../lib/search/protocol.js";
+import { createPrivateStateStore } from "../lib/compat/state.js";
 
 async function fixture() { await mkdir(".temp/edges", { recursive: true }); return mkdtemp(join(process.cwd(), ".temp/edges/state-")); }
 function childFinished(child) { return new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => code === 0 ? resolve() : reject(new Error("离线子进程失败"))); }); }
@@ -32,7 +32,7 @@ test("真正 HTTP gzip 的解压后字节超限立即撤销网络，不返回部
   const controller = new AbortController();
   try {
     const response = await fetch(`http://localhost:${server.address().port}`, { dispatcher, signal: controller.signal });
-    await assert.rejects(readResponseTextLimited(response, 100, controller.signal, () => controller.abort()), (error) => error.kind === "too_large");
+    await assert.rejects(readResponseTextLimited(response, 100, controller.signal, () => controller.abort()), (error) => error.kind === "response_too_large");
     assert.equal(controller.signal.aborted, true);
   } finally { await dispatcher.destroy(); await new Promise((resolve) => server.close(resolve)); }
 });
@@ -45,7 +45,7 @@ test("多进程同时恢复已退出主锁，互不删除新锁且合并全部�
   await writeFile(join(directory, ".quota-state.lock"), JSON.stringify({ version: 1, pid: dead.pid, nonce: "d".repeat(48) }), { mode: 0o600 });
   const stopped = new Promise((resolve) => dead.once("close", resolve));
   dead.kill("SIGKILL"); await stopped;
-  const module = new URL("../lib/core/quota.js", import.meta.url).href;
+  const module = new URL("../lib/compat/quota.js", import.meta.url).href;
   const script = `import {QuotaManager} from ${JSON.stringify(module)}; const q=new QuotaManager({stateDirectory:process.argv[1]},{}); await q.initialize(); q.recordFailure(process.argv[2],"anonymous",undefined,"rate_limited"); if(await q.flush()!=="saved") process.exitCode=2;`;
   const children = ["exa", "tavily", "parallel", "firecrawl", "tinyfish"].map((backend) => spawn(process.execPath, ["--input-type=module", "-e", script, directory, backend], { stdio: "ignore" }));
   await Promise.all(children.map(childFinished));
@@ -60,7 +60,11 @@ test("未知状态、损坏恢复门闩和硬链接保持原样并明确降级",
   await writeFile(path, "用户已有未知内容", { mode: 0o600 });
   assert.equal((await createPrivateStateStore(directory).load()).status, "unavailable");
   assert.equal(await readFile(path, "utf8"), "用户已有未知内容");
-  const engine = createSearchEngine({ stateDirectory: directory, retries: 0 }, { env: {}, fetch: async () => new Response(JSON.stringify({ result: { content: [{ text: "Title: 结果\nURL: https://example.test/" }] } })) });
+  // 用独立目录验证“状态不可用只降级为警告”：旧 createPrivateStateStore 会改写
+  // 同一目录，直接复用会让本例测到前一步的副作用而不是降级行为。
+  const warningDirectory = await fixture();
+  await writeFile(join(warningDirectory, "state.json"), "用户已有未知内容", { mode: 0o600 });
+  const engine = createSearchEngine({ stateDirectory: warningDirectory, retries: 0 }, { env: {}, fetch: async () => new Response(JSON.stringify({ result: { content: [{ type: "text", text: "Title: 结果\nURL: https://example.test/" }] } })) });
   try { assert.match((await engine.search({ query: "状态警告" })).content, /未能安全保存/u); }
   finally { await engine.dispose(); }
 
@@ -91,7 +95,7 @@ test("取钥期间预取消不开始后续解析，JSON 转义密钥也被清除
   finally { await canceled.dispose(); }
   const key = 'synthetic"quote-key';
   const inner = JSON.stringify({ results: [{ url: "https://example.test/", title: key }] });
-  const engine = createSearchEngine({ allowBillable: true }, { resolveKey: async (provider) => provider === "exa" ? key : undefined, fetch: async () => new Response(JSON.stringify({ result: { content: [{ text: inner }] } })) });
+  const engine = createSearchEngine({ allowBillable: true }, { resolveKey: async (provider) => provider === "exa" ? key : undefined, fetch: async () => new Response(JSON.stringify({ result: { content: [{ type: "text", text: inner }] } })) });
   try {
     const value = await engine.search({ query: "转义" });
     assert.equal(value.content?.includes(JSON.stringify(key).slice(1, -1)), false);

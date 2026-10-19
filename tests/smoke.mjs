@@ -1,4 +1,4 @@
-import { createSearchEngine } from "../lib/core/index.js";
+import { createSearchEngine } from "../lib/search/engine.js";
 
 const env = new Proxy({}, { get() { throw new Error("匿名冒烟禁止读取任何密钥"); } });
 const engine = createSearchEngine({ allowBillable: false, timeoutMs: 25_000, retries: 0 }, { env });

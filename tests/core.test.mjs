@@ -3,7 +3,7 @@ import test from "node:test";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const core = await import(new URL("../lib/core/index.js", import.meta.url));
+const core = await import(new URL("../lib/search/engine.js", import.meta.url));
 const hit = { url: "https://example.test/page", title: "离线结果", snippet: "测试摘要" };
 const mcp = (text) => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text }] } }), { headers: { "content-type": "application/json" } });
 function replyFor(provider) {
@@ -51,6 +51,8 @@ test("默认路径不读取环境密钥；授权时先解析四把密钥但匿�
     fetch: async (_url, init) => { calls++; assert.equal(init.headers.authorization, undefined); return replyFor("exa"); },
   });
   const result = await authorized.search({ query: "free first" });
+  // DSH 宿主的默认解析集合仍是四家；SerpApi 只在显式声明 keyProviders 的宿主中解析。
+  // 匿名优先与"未授权不读密钥"两条语义不变。
   assert.deepEqual([...resolved].sort(), ["exa", "firecrawl", "parallel", "tavily"]);
   assert.equal(calls, 2);
   assert.equal(result.accessTier, "anonymous");

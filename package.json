@@ -1,29 +1,95 @@
 {
   "name": "dsh-web-search",
-  "version": "0.1.2",
-  "description": "DSH 独立聚合搜索提供方：匿名优先、费用授权、额度预检与有界取消",
+  "version": "0.2.0",
+  "description": "同时兼容 DSH 与 Pi 的网页搜索/抓取插件：匿名优先、费用授权、额度预检与有界取消",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
   "exports": {
-    ".": { "types": "./lib/index.d.ts", "default": "./lib/index.js" },
-    "./core": { "types": "./lib/core/index.d.ts", "default": "./lib/core/index.js" },
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./pi": {
+      "types": "./lib/hosts/pi.d.ts",
+      "default": "./lib/hosts/pi.js",
+      "dsh": {
+        "types": "./lib/hosts/pi.d.ts",
+        "default": "./lib/hosts/pi.js"
+      }
+    },
+    "./fetch": {
+      "types": "./lib/fetch/index.d.ts",
+      "default": "./lib/fetch/index.js"
+    },
+    "./core": {
+      "types": "./lib/search/index.d.ts",
+      "default": "./lib/search/index.js"
+    },
     "./package.json": "./package.json"
   },
-  "files": ["lib", "src", "cordis.patch.yml", "README.md", "LICENSE", "NOTICE.md"],
+  "files": [
+    "lib",
+    "src",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
-    "check:artifacts": "node tests/check-artifacts.mjs",
-    "test": "npm run build && node --test tests/*.test.mjs",
+    "check:artifacts": "node scripts/copy-assets.mjs && node tests/check-artifacts.mjs",
+    "test": "npm run build && npm run test:dsh && npm run test:pi",
+    "test:dsh": "node --test tests/*.test.mjs",
+    "test:pi": "node --test tests/pi/*.test.mjs tests/fetch/*.test.mjs",
     "smoke": "npm run build && node tests/smoke.mjs"
   },
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "license": "MIT",
-  "dsh": { "bundle": { "patch": "cordis.patch.yml" } },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "pi",
+    "pi-extension",
+    "web-search",
+    "web-fetch"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "cordis.patch.yml"
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./pi.ts"
+    ]
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-web": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-web": "0.2.1-rc.2",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-web": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "3.18.5",

@@ -1,15 +1,24 @@
-# 补丁按整行配置替换；明确保留官方 HTTP 抓取选择，不覆盖模型工具。
+# 补丁按整行配置替换；同时启用本插件的搜索与抓取提供方。
+#
+# - 搜索：`free-first`（沿用既有 id，安装与设置无需迁移）
+# - 抓取：`local-first`（官方 http 插件已占用 `http`，不能用同名覆盖）
+# 若你已自定义 fetchProvider，请把本补丁里的 fetchProvider 改回你的选择。
 - insert:
     - id: web-search
       name: dsh-web-search
       config:
         allowBillable: false
         timeoutMs: 25000
+        totalTimeoutMs: 90000
         maxResponseBytes: 5242880
         maxChars: 24000
         retries: 1
+        fetchTimeoutMs: 20000
+        fetchMaxResponseBytes: 5242880
+        fetchMaxChars: 24000
+        fetchMaxRedirects: 3
 
 - id: web
   config:
     searchProvider: free-first
-    fetchProvider: http
+    fetchProvider: local-first

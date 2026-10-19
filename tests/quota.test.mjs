@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const root = join(process.cwd(), ".temp/core");
-const { QuotaManager } = await import(new URL("../lib/core/quota.js", import.meta.url));
-const { createPrivateStateStore } = await import(new URL("../lib/core/state.js", import.meta.url));
+const { QuotaManager } = await import(new URL("../lib/compat/quota.js", import.meta.url));
+const { createPrivateStateStore } = await import(new URL("../lib/compat/state.js", import.meta.url));
 function fixture(name) { return join(root, `${name}-${process.pid}-${Math.random().toString(16).slice(2)}`); }
 function closeChild(child) { return new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`子进程退出码 ${code}`))); }); }
 
@@ -52,7 +52,7 @@ test("私有状态仅持久化 HMAC 冷却，跨进程并发保存合并", async
   const second = new QuotaManager({ stateDirectory: directory }, {});
   await second.initialize();
   second.recordFailure("firecrawl", "anonymous", undefined, "quota_exhausted");
-  const childUrl = new URL("../lib/core/quota.js", import.meta.url).href;
+  const childUrl = new URL("../lib/compat/quota.js", import.meta.url).href;
   const code = `import { QuotaManager } from ${JSON.stringify(childUrl)}; const manager = new QuotaManager({stateDirectory:process.argv[1]},{}); await manager.initialize(); manager.recordFailure(process.argv[2],"anonymous",undefined,"rate_limited"); const result=await manager.flush(); if(result!=="saved") process.exitCode=3;`;
   const children = ["tavily", "parallel"].map((backend) => spawn(process.execPath, ["--input-type=module", "-e", code, directory, backend], { stdio: "ignore" }));
   await Promise.all(children.map(closeChild));
