@@ -60,19 +60,35 @@ export interface SearchFailure {
 	readonly label: string;
 	readonly kind: SearchErrorKind | "unknown" | "cooldown" | "missing_key" | "budget_exhausted";
 	readonly message: string;
+	/** 上游给出的恢复时长；宿主据此区分 Retry-After 与固定退避。 */
+	readonly retryAfterMs?: number;
 }
 
 export interface EngineOptions extends SearchOptions {
 	readonly strategy?: "free-first" | "key-first";
+	/**
+	 * 复用调用方已有的额度管理器。
+	 *
+	 * 生产环境每次搜索新建实例即可；但宿主可能持有常驻管理器（例如 Pi 的
+	 * `/web-search-auth` 菜单要读取冷却状态），此时必须共用同一个实例，
+	 * 否则菜单看到的永远是一份空快照。
+	 */
+	readonly quotaManager?: ReturnType<typeof createQuotaManager>;
 }
 
 /** 对外错误只包含固定中文诊断与稳定代码，不保留上游异常或因果链。 */
 export class SearchError extends Error {
 	readonly code: string;
-	constructor(code: string) {
-		super(SAFE_MESSAGES[code] ?? SAFE_MESSAGES.INVALID_REQUEST!);
+	/**
+	 * @param code 稳定的错误码，宿主按它路由。
+	 * @param detail 可选的诊断细节（已脱敏）。追加在固定文案之后，
+	 *   让调用方能看出具体是哪个服务商失败了，而不是只得到一句总述。
+	 */
+	constructor(code: string, detail?: string) {
+		const safe = SAFE_MESSAGES[code];
+		super(`${safe ?? SAFE_MESSAGES.INVALID_REQUEST!}${detail === undefined || detail.length === 0 ? "" : ` — ${detail}`}`);
 		this.name = "SearchError";
-		this.code = SAFE_MESSAGES[code] === undefined ? "INVALID_REQUEST" : code;
+		this.code = safe === undefined ? "INVALID_REQUEST" : code === "BUDGET_EXHAUSTED" ? "TIMEOUT" : code;
 	}
 }
 
@@ -81,6 +97,9 @@ const SAFE_MESSAGES: Readonly<Record<string, string>> = {
 	INVALID_REQUEST: "搜索请求无效",
 	SEARCH_FAILED: "所有搜索通道均不可用",
 	TIMEOUT: "搜索超时",
+	// 兼容既有约定：预算耗尽在错误码上仍属于超时类别（TIMEOUT），
+	// 但文案与诊断标记要能区分"总预算用尽"与"单请求超时"。
+	BUDGET_EXHAUSTED: "整次搜索的总时间预算已用尽",
 	ABORTED: "搜索已取消",
 	DISPOSED: "搜索引擎已关闭",
 	KEY_RESOLUTION_FAILED: "无法安全读取计费密钥",
@@ -205,9 +224,9 @@ export function renderOutcome(query: string, outcome: { backend: ProviderId; tex
 
 /** REST 后端的正文形态统一为 Markdown 来源列表。 */
 function renderBody(outcome: { backend: ProviderId; text: string; sources: readonly SearchSource[] }): string {
-	if (outcome.backend === "exa" || outcome.backend === "parallel" || outcome.backend === "tinyfish") {
-		if (outcome.text.length > 0) return outcome.text;
-	}
+	// Exa 返回的是大模型友好的文本布局（Title / URL / Highlights），直接透传；
+	// 其余后端归一化为带链接的 Markdown 来源列表，避免把原始 JSON 塞给模型。
+	if (outcome.backend === "exa" && outcome.text.length > 0) return outcome.text;
 	return renderSources(outcome.sources, outcome.text);
 }
 
@@ -231,11 +250,20 @@ export { parseMcpResponse } from "./mcp-protocol.js";
 export { redactSecrets, expandSecrets } from "../shared/redact.js";
 
 /** 构造独立搜索引擎；不读取宿主配置，只使用调用方给出的选项与依赖。 */
-export function createSearchEngine(options: EngineOptions = {}, deps: SearchDependencies = {}): SearchEngine & { searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult> } {
+/** 正文落盘回调：返回写入路径与内容是否完整。 */
+export type SpillWriter = (text: string) => Promise<{ path: string; complete: boolean }>;
+
+/** 内核实例：在公开契约之外提供宿主诊断与呈现所需的附加能力。 */
+export interface DetailedSearchEngine extends SearchEngine {
+	searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult>;
+	searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }>;
+}
+
+export function createSearchEngine(options: EngineOptions = {}, deps: SearchDependencies = {}): DetailedSearchEngine {
 	const settings = validateOptions(options);
 	const stateDirectory = options.stateDirectory;
 	// 未给出状态目录时只用进程内状态：不猜测、不创建任何用户目录。
-	const quota = createQuotaManager({
+	const quota = options.quotaManager ?? createQuotaManager({
 		...(stateDirectory === undefined ? {} : { stateStore: createPrivateQuotaStateStore(stateDirectory) }),
 		...(deps.clock === undefined ? {} : { clock: deps.clock }),
 		deadlineMs: Math.min(settings.timeoutMs, 2_000),
@@ -311,7 +339,10 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 				keys.set(provider, undefined);
 				continue;
 			}
-			if (typeof value !== "string" || !/^[\x21-\x7e]{1,4096}$/u.test(value)) throw new SearchError("INVALID_KEY");
+			// 默认严格：只接受可打印 ASCII。Pi 宿主历史上允许粘贴带空格的密钥，
+			// 通过 {@link SearchDependencies.allowWhitespaceKeys} 显式放宽。
+			const pattern = deps.allowWhitespaceKeys === true ? /^[\x20-\x7e]{1,4096}$/u : /^[\x21-\x7e]{1,4096}$/u;
+			if (typeof value !== "string" || !pattern.test(value)) throw new SearchError("INVALID_KEY");
 			keys.set(provider, value);
 		}
 		return keys;
@@ -354,6 +385,13 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 				if (error instanceof BudgetExhaustedError) throw error;
 				// 单请求预算与整次预算共用同一截止时间：只要已经耗尽，就不再重试后续通道。
 				if (budget.exhausted) throw new BudgetExhaustedError();
+				// 失败也是一次真实尝试：带上次数，宿主才能正确报告 attemptCount。
+				if (error instanceof BackendError) {
+					(error as BackendError & { attempts?: number }).attempts = attempts;
+					if (Object.getOwnPropertyDescriptor(error, "detail") === undefined) {
+						Object.assign(error, { detail: { backend, channel, kind: error.kind, ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }) } });
+					}
+				}
 				if (!(error instanceof BackendError) || !error.retryable || error.kind === "rate_limited" || round >= settings.retries) throw error;
 				const wait = Math.min(RETRY_MAX_WAIT_MS, Math.max(RETRY_BASE_MS * 2 ** round, error.retryAfterMs ?? 0));
 				await sleep(wait, signal, budget.deadlineMs);
@@ -381,7 +419,16 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 		try {
 			if (channel === "key" && (backend === "tavily" || backend === "firecrawl")) {
 				if (credential === undefined) throw new BackendError("缺少计费授权或密钥", "invalid_key");
-				const balance = await quota.lookupBalance({ backend, channel: "key", credential, allowBillable: true, signal: child.signal, maxResponseBytes: settings.maxResponseBytes });
+				const balance = await quota.lookupBalance({
+					backend,
+					channel: "key",
+					credential,
+					allowBillable: true,
+					signal: child.signal,
+					maxResponseBytes: settings.maxResponseBytes,
+					// 与后续 getCooldown 使用同一个覆盖值，否则预检会被已有冷却挡住。
+					...(settings.cooldownOverrideMs === undefined ? {} : { cooldownOverrideMs: settings.cooldownOverrideMs }),
+				});
 				checkAborted(signal);
 				if (timedOut) throw new BackendError(`${backend} 额度预检超时`, "timeout");
 				if (balance.state === "unknown") {
@@ -430,11 +477,24 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 			return parsed;
 		} catch (error) {
 			if (isAborted(signal)) throw abortError();
-			// 只有整次调用的总预算耗尽才终止；单个通道超时应当切换下一家继续尝试。
-			// 这两者必须分开：把通道超时当成总预算耗尽会让一个慢服务商拖垮整次搜索。
-			if (budget.exhausted) throw new BudgetExhaustedError();
-			if (timedOut) throw new BackendError(`${backend} 请求超时`, "timeout");
-			const failure = error instanceof BackendError ? error : new BackendError("搜索请求失败", "network_error");
+			// 两种超时必须分开处理：
+			// - 通道打满的是「本次可用预算」→ 整次调用已无剩余，停止并报预算耗尽；
+			// - 通道只打满单请求预算、总预算仍有余 → 切换下一家继续尝试。
+			if (budget.exhausted || (timedOut && budgetBound)) {
+				// 附带已尝试通道的诊断，调用方能看出预算是在哪一家耗尽的。
+				const spent = new BackendError("预算耗尽", "budget_exhausted");
+				Object.assign(spent, { detail: { backend, channel, kind: "budget_exhausted" } });
+				throw spent;
+			}
+			if (timedOut) throw new BackendError(`${backend} timed out after ${singleWait}ms`, "timeout");
+			// 未知异常保留其脱敏后的诊断：只报固定文案会让"网络错误"与"协议错误"
+			// 无法区分，也不利于宿主排查。密钥遮蔽在返回前统一处理。
+			// 是否把底层诊断带给调用方由宿主决定：DSH 要求公开错误不保留底层内容，
+			// Pi 需要它来区分网络错误与协议错误（密钥在返回前统一遮蔽）。
+			const rawDetail = deps.includeErrorDetail === true && error instanceof Error && error.message.length > 0 ? `：${error.message}` : "";
+			const failure = error instanceof BackendError ? error : new BackendError(`搜索请求失败${rawDetail}`, "network_error");
+			// 结构化分类供宿主更新冷却观察面；不进入对外文案。
+			Object.assign(failure, { detail: { backend, channel, kind: failure.kind, ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }) } });
 			if (dispatched) {
 				if (failure.kind === "rate_limited") {
 					quota.recordFailure(backend, channel === "free" ? "anonymous" : "key", "rate_limited", { ...(credential === undefined ? {} : { credential }), ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }), ...(settings.cooldownOverrideMs === undefined ? {} : { cooldownMs: settings.cooldownOverrideMs }) });
@@ -575,19 +635,32 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 				} catch (error) {
 					checkAborted(controller.signal);
 					// 预算耗尽立即结束整次调用：不再尝试任何后续通道，也不转成"全部不可用"。
-					if (error instanceof BudgetExhaustedError) throw error;
+					if (error instanceof BudgetExhaustedError) throw new SearchError("BUDGET_EXHAUSTED", "[budget_exhausted]");
+					if (error instanceof BackendError && error.kind === "budget_exhausted") {
+						const where = (error as BackendError & { detail?: { backend?: string } }).detail?.backend;
+						// 带上分类标记：宿主与测试都需要能把它与普通超时区分开。
+						throw new SearchError("BUDGET_EXHAUSTED", `${where === undefined ? "" : `在 ${where} 耗尽 `}[budget_exhausted]`);
+					}
 					// 失败记录之后若预算已耗尽，本次调用必须归类为超时：
 					// 继续把后续通道计入"不可用"会掩盖真正原因。
 					if (budget.exhausted) throw new BudgetExhaustedError();
+					// 失败的通道同样消耗了一次真实请求，必须计入 attemptCount。
+					attempts += error instanceof BackendError ? ((error as BackendError & { attempts?: number }).attempts ?? 0) : 0;
 					failures.push({
 						label: stepLabel(step),
 						kind: error instanceof BackendError ? error.kind : "unknown",
 						message: redactSecrets(error instanceof BackendError ? error.message : "未知错误", secrets),
+						// 冷却时长的原始依据：宿主据此区分 Retry-After 与固定退避。
+						...(error instanceof BackendError && error.retryAfterMs !== undefined ? { retryAfterMs: error.retryAfterMs } : {}),
 					});
 				}
 			}
 			const label = failures.map((failure) => `${failure.label}[${failure.kind}]: ${failure.message}`).join(" | ");
-			throw new BackendError(label.length === 0 ? "所有搜索通道均不可用" : label, "protocol_error");
+			const error = new SearchError("SEARCH_FAILED", label.length === 0 ? undefined : label);
+			// 失败明细同时挂在错误上：宿主需要据此更新自己的冷却观察面，
+			// 又不必重新解析文案。这里只放已脱敏的结构化字段。
+			(error as SearchError & { failures?: readonly SearchFailure[] }).failures = failures;
+			throw error;
 		} catch (error) {
 			if (isAborted(signal)) {
 				// 取消或超时前已记录的冷却仍要落盘：不能依赖正常完成路径。
@@ -602,8 +675,9 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 				const code = error.kind === "invalid_key" ? "INVALID_KEY" : "SEARCH_FAILED";
 				throw new SearchError(code);
 			}
-			// 预算耗尽与单请求超时都归类为超时，便于宿主统一提示。
-			if (error instanceof BudgetExhaustedError) throw new SearchError("TIMEOUT");
+			// 预算耗尽与单请求超时都归类为超时，但保留"总预算用尽"的可辨语义。
+			// 外层兜底同样带分类标记，保证任何一条预算耗尽路径都可被识别。
+			if (error instanceof BudgetExhaustedError) throw new SearchError("BUDGET_EXHAUSTED", "[budget_exhausted]");
 			if (error instanceof BackendError && error.kind === "timeout") throw new SearchError("TIMEOUT");
 			throw new SearchError("SEARCH_FAILED");
 		} finally {
@@ -615,6 +689,23 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 	return {
 		async searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult> {
 			return runSearch(request, signal);
+		},
+		/**
+		 * 与 {@link SearchEngine.searchDetailed} 相同，但正文超限时额外落盘并带回路径。
+		 *
+		 * 落盘是宿主呈现策略而不是搜索语义：DSH 直接截断，Pi 需要保留完整正文供模型
+		 * `read`。放进内核是为了让两个宿主共用同一条执行路径，而不是各自再写一遍编排。
+		 */
+		async searchWithSpill(request: SearchRequest, spill: SpillWriter, signal?: AbortSignal): Promise<SearchOutcomeResult & { spillPath?: string; spillComplete?: boolean; spillFailed?: boolean }> {
+			const result = await runSearch(request, signal);
+			if (result.text.length <= settings.maxChars) return result;
+			try {
+				const written = await spill(result.text);
+				return { ...result, spillPath: written.path, spillComplete: written.complete };
+			} catch {
+				// 落盘失败不影响已经取得的结果，但必须让宿主能给出提示。
+				return { ...result, spillFailed: true };
+			}
 		},
 		async search(request: SearchRequest, signal?: AbortSignal): Promise<SearchResult> {
 			const result = await runSearch(request, signal);

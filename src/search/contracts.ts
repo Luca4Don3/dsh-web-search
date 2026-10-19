@@ -52,6 +52,10 @@ export interface SearchDependencies {
   readonly resolveKey?: (provider: KeyProviderId, signal: AbortSignal) => string | undefined | Promise<string | undefined>;
   /** 授权后需要解析的计费后端；缺省为内核登记的全部计费后端。 */
   readonly keyProviders?: readonly KeyProviderId[];
+  /** 是否允许密钥包含空格等空白可打印字符（Pi 兼容旧行为）。 */
+  readonly allowWhitespaceKeys?: boolean;
+  /** 是否把底层异常文本（脱敏后）带进失败诊断；默认不带。 */
+  readonly includeErrorDetail?: boolean;
   readonly clock?: () => number;
 }
 
