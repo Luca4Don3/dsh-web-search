@@ -40,15 +40,13 @@ const fetchEntry = await import("dsh-web-search/fetch");
 if (typeof plugin.apply !== "function") fail("DSH 插件入口不可加载");
 if (typeof core.createSearchEngine !== "function") fail("搜索核心入口不可加载");
 if (typeof fetchEntry.fetchPage !== "function") fail("抓取内核入口不可加载");
-// Pi 入口在缺少 Pi 依赖时不应阻止 DSH 安装：只在能解析时检查。
-let piChecked = false;
-try {
-  const pi = await import("dsh-web-search/pi");
-  if (typeof pi.default !== "function") fail("Pi 扩展入口不可加载");
-  piChecked = true;
-} catch (error) {
-  if (!/Cannot find package|ERR_MODULE_NOT_FOUND/u.test(String(error?.message ?? error))) throw error;
-}
+// Pi 入口只做静态校验：真实 import 会拉起 Pi 的完整运行时，
+// 其内部模块版本差异不应让 DSH 的打包检查失败。
+const piEntry = await readFile(join(root, "pi.ts"), "utf8");
+if (!/export default function/u.test(piEntry)) fail("Pi 入口缺少默认导出");
+if (!/piWebSearch|piWebFetch/u.test(piEntry)) fail("Pi 入口未组合搜索与抓取适配层");
+await readFile(join(root, "lib/hosts/pi.js"), "utf8");
+await readFile(join(root, "lib/hosts/pi-fetch.js"), "utf8");
 // Pi 的根入口必须与 package.json 声明一致，避免安装后静默不加载。
 if (JSON.stringify(manifest.pi?.extensions) !== JSON.stringify(["./pi.ts"])) fail("Pi 扩展入口声明与 pi.ts 不一致");
-console.log(`已验证 ${actual.length} 个已跟踪编译文件；DSH 插件、搜索内核与抓取内核入口均可直接加载${piChecked ? "，Pi 入口可加载" : "（未安装 Pi 依赖，跳过 Pi 入口加载）"}。`);
+console.log(`已验证 ${actual.length} 个已跟踪编译文件；DSH 插件、搜索内核与抓取内核入口可直接加载，Pi 入口产物与声明一致。`);
