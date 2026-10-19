@@ -1,9 +1,11 @@
-/** 有界读取解压后的响应流，并在取消或超限时消费迟到结果。 */
+/**
+ * DSH 0.1.x 的 `CoreFault` 兼容类型。
+ *
+ * 旧实现还在这里自带了一套有界响应体读取；合并后统一由
+ * {@link ../shared/response-body.js} 提供，因此本文件只保留错误类型，
+ * 避免出现第二份字节计数与取消逻辑。
+ */
 export declare class CoreFault extends Error {
     readonly kind: "aborted" | "timeout" | "too_large" | "network" | "protocol" | "rate" | "exhausted" | "other";
     constructor(kind: "aborted" | "timeout" | "too_large" | "network" | "protocol" | "rate" | "exhausted" | "other");
 }
-export declare const DEFAULT_MAX_RESPONSE_BYTES: number;
-export declare const MAX_RESPONSE_BYTES: number;
-/** 以字节计数，超限不返回部分正文；signal 忽略者也不会拖住调用方。 */
-export declare function readResponseTextLimited(response: Response, maxBytes: number, signal: AbortSignal, abortNetwork?: () => void): Promise<string>;

@@ -27,6 +27,7 @@ import { apiHttpKind, buildApiRequest, isApiBackend, parseApiResponse } from "./
 import { ANONYMOUS_PROVIDER_ORDER, BILLABLE_PROVIDER_ORDER, getProviderMetadata, isProviderId, PROVIDERS } from "./registry.js";
 import { parseMcpBlocks } from "./mcp-protocol.js";
 import { readResponseTextLimited } from "../shared/response-body.js";
+import { parseRetryAfter, RETRY_AFTER_MAX_MS } from "../shared/retry-after.js";
 import { createQuotaManager, type QuotaChannel } from "../quota/core.js";
 import { createPrivateQuotaStateStore } from "../quota/state-store.js";
 import { lookupUsage } from "../quota/usage.js";
@@ -147,14 +148,9 @@ function stepLabel(step: { backend: ProviderId; channel: "free" | "key" }): stri
 	return step.channel === "key" ? `${step.backend}(key)` : step.backend;
 }
 
-/** 解析 Retry-After（秒数或 HTTP 日期）。 */
-function parseRetryAfter(value: string | null): number | undefined {
-	if (value === null || value.trim().length === 0) return undefined;
-	const seconds = Number(value.trim());
-	if (Number.isFinite(seconds) && seconds >= 0) return Math.min(Math.ceil(seconds * 1000), 24 * 60 * 60 * 1000);
-	const at = Date.parse(value);
-	if (Number.isNaN(at)) return undefined;
-	return Math.min(Math.max(at - Date.now(), 0), 24 * 60 * 60 * 1000);
+/** 搜索把 Retry-After 当作冷却时长，因此上限为 24 小时。 */
+function retryAfterMs(value: string | null): number | undefined {
+	return parseRetryAfter(value, { maxMs: RETRY_AFTER_MAX_MS });
 }
 
 /** 只接受 1..20 的整数结果条数。 */
@@ -445,7 +441,7 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 					if (error instanceof BackendError && error.kind === "response_too_large") throw error;
 				}
 				const kind = isApiBackend(backend) ? apiHttpKind(backend, response.status, detail) : httpKind(response.status, detail);
-				throw new BackendError(`${backend} HTTP ${response.status}${detail.length === 0 ? "" : `：${detail}`}`, kind, kind === "rate_limited" ? parseRetryAfter(response.headers.get("retry-after")) : undefined);
+				throw new BackendError(`${backend} HTTP ${response.status}${detail.length === 0 ? "" : `：${detail}`}`, kind, kind === "rate_limited" ? retryAfterMs(response.headers.get("retry-after")) : undefined);
 			}
 			const body = await readResponseTextLimited(response, settings.maxResponseBytes, child);
 			const parsed = parseResult(step, body, request.maxResults);

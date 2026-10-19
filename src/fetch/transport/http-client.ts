@@ -8,6 +8,7 @@ import { FetchError, type FetchErrorKind } from "../errors.js";
 import { createFetchDeadline } from "./deadline.js";
 import { resolveFetchTarget, type ResolvedTarget } from "./url-policy.js";
 import { readResponseTextLimited } from "./response-body.js";
+import { parseRetryAfterHeader } from "../../shared/retry-after.js";
 
 export interface HttpFetchRequest {
 	/** 规范化后的目标 URL。 */
@@ -216,7 +217,7 @@ export async function httpFetch(input: HttpFetchRequest): Promise<HttpFetchRespo
 				if (status === 401 || status === 403) throw new FetchError("目标要求认证", "http_error", { statusCode: status });
 				if (status === 404) throw new FetchError("目标不存在", "http_error", { statusCode: status });
 				if (status === 429) {
-					throw new FetchError("目标限流", "http_error", { statusCode: status, retryAfterMs: parseRetryAfter(headers["retry-after"]) });
+					throw new FetchError("目标限流", "http_error", { statusCode: status, retryAfterMs: retryAfterHeader(headers["retry-after"]) });
 				}
 				if (status >= 500) throw new FetchError("目标服务端错误", "http_error", { statusCode: status });
 				if (status !== 200) throw new FetchError("目标返回了不受支持的状态", "http_error", { statusCode: status });
@@ -257,13 +258,7 @@ export async function httpFetch(input: HttpFetchRequest): Promise<HttpFetchRespo
 }
 
 /** 解析 Retry-After 的秒与 HTTP 日期两种形式。 */
-function parseRetryAfter(value: string | string[] | undefined): number | undefined {
-	if (value === undefined) return undefined;
-	const trimmed = (Array.isArray(value) ? value[0] : value).trim();
-	if (trimmed.length === 0) return undefined;
-	const seconds = Number(trimmed);
-	if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1000);
-	const timestamp = Date.parse(trimmed);
-	if (!Number.isFinite(timestamp)) return undefined;
-	return Math.max(0, timestamp - Date.now());
+/** 抓取只把 Retry-After 用于诊断，因此沿用共享解析且不钳制上限。 */
+function retryAfterHeader(value: string | string[] | undefined): number | undefined {
+	return parseRetryAfterHeader(value);
 }

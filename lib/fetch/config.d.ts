@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES } from "../shared/response-body.js";
 /**
  * web_fetch 的配置读取与严格校验。
  *
@@ -6,9 +7,11 @@
  */
 /** 默认整次抓取总预算，包含初始解析、所有跳转与正文读取。 */
 export declare const DEFAULT_TIMEOUT_MS = 20000;
-/** 默认解压后响应体上限，与 web-search 的响应体上限保持一致。 */
-export declare const DEFAULT_MAX_RESPONSE_BYTES = 5242880;
-export declare const MAX_RESPONSE_BYTES = 20971520;
+/**
+ * 响应体上限与搜索侧共用同一组常量，避免两处各自维护出现漂移。
+ * 这里重新导出，保持既有 `fetch/config` 导入路径不变。
+ */
+export { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES };
 /** 默认模型可见正文字符上限。 */
 export declare const DEFAULT_MAX_CHARS = 24000;
 export declare const MAX_CHARS_LIMIT = 200000;
