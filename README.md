@@ -91,6 +91,7 @@ pi install <server_path>/dsh-web-search
 | `PI_WEB_FETCH_MAX_RESPONSE_BYTES` | `5242880` | 抓取响应体上限 |
 | `PI_WEB_FETCH_MAX_CHARS` | `24000` | 抓取正文上限 |
 | `PI_WEB_FETCH_MAX_REDIRECTS` | `3` | 最大跳转次数 |
+| `PI_WEB_FETCH_REMOTE_FALLBACK` | `off` | 远程回退；当前只接受 `off`，设为 `jina` 会在任何请求前明确报错 |
 
 密钥：`EXA_API_KEY`、`TAVILY_API_KEY`、`PARALLEL_API_KEY`、`FIRECRAWL_API_KEY`、`SERPAPI_API_KEY`。TinyFish 始终 keyless，不读取 `TINYFISH_API_KEY`。
 

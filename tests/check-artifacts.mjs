@@ -49,4 +49,24 @@ await readFile(join(root, "lib/hosts/pi.js"), "utf8");
 await readFile(join(root, "lib/hosts/pi-fetch.js"), "utf8");
 // Pi 的根入口必须与 package.json 声明一致，避免安装后静默不加载。
 if (JSON.stringify(manifest.pi?.extensions) !== JSON.stringify(["./pi.ts"])) fail("Pi 扩展入口声明与 pi.ts 不一致");
+
+// 声明了入口还不够：该文件必须真的在 npm 发布清单里，否则安装后静默失效。
+// 这里用 npm pack 的真实清单校验，而不是只读 package.json。
+const packed = spawnSync("npm", ["pack", "--dry-run", "--json", "--cache", join(root, ".temp", "npm-cache")], {
+  cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+});
+if (packed.status !== 0 || packed.error) fail("无法获取 npm 打包清单");
+let report;
+try { report = JSON.parse(packed.stdout); } catch { fail("npm 打包清单不是合法 JSON"); }
+// npm 的不同版本会用数组或「以包名为键」的对象；两种都接受。
+const entry = Array.isArray(report) ? report[0] : (report[manifest.name] ?? Object.values(report)[0]);
+const packedFiles = new Set((entry?.files ?? []).map((file) => file.path));
+for (const declared of manifest.pi?.extensions ?? []) {
+  const path = declared.replace(/^\.\//u, "");
+  if (!packedFiles.has(path)) fail(`Pi 入口 ${path} 声明了但不在发布清单中`);
+}
+// 其它对外承诺的入口同样必须随包发布。
+for (const required of ["cordis.patch.yml", "lib/index.js", "lib/hosts/pi.js"]) {
+  if (!packedFiles.has(required)) fail(`发布清单缺少 ${required}`);
+}
 console.log(`已验证 ${actual.length} 个已跟踪编译文件；DSH 插件、搜索内核与抓取内核入口可直接加载，Pi 入口产物与声明一致。`);
