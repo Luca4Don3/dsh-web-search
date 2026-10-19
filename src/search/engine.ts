@@ -26,7 +26,7 @@ import { buildTinyFishHeaders, buildTinyFishPayload, parseTinyFishResults, TINYF
 import { apiHttpKind, buildApiRequest, isApiBackend, parseApiResponse } from "./search-api.js";
 import { ANONYMOUS_PROVIDER_ORDER, BILLABLE_PROVIDER_ORDER, getProviderMetadata, isProviderId, PROVIDERS } from "./registry.js";
 import { parseMcpBlocks } from "./mcp-protocol.js";
-import { readResponseTextLimited } from "../shared/response-body.js";
+import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, readResponseTextLimited } from "../shared/response-body.js";
 import { parseRetryAfter, RETRY_AFTER_MAX_MS } from "../shared/retry-after.js";
 import { createQuotaManager, type QuotaChannel } from "../quota/core.js";
 import { createPrivateQuotaStateStore } from "../quota/state-store.js";
@@ -184,7 +184,7 @@ function validateOptions(options: EngineOptions): Required<Pick<SearchOptions, "
 		strategy: options.strategy ?? "free-first",
 		timeoutMs,
 		totalTimeoutMs: int(options.totalTimeoutMs, totalFallback, 1, 600_000, "totalTimeoutMs"),
-		maxResponseBytes: int(options.maxResponseBytes, 5 * 1024 * 1024, 1, 20 * 1024 * 1024, "maxResponseBytes"),
+		maxResponseBytes: int(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, 1, MAX_RESPONSE_BYTES, "maxResponseBytes"),
 		maxChars: int(options.maxChars, MAX_TEXT_CHARS, 1, 200_000, "maxChars"),
 		retries: int(options.retries, 1, 0, 3, "retries"),
 	};

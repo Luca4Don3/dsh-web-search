@@ -1,5 +1,6 @@
 /** 额度核心：HMAC scope、冷却历史、额度查询缓存和进程内同步预留。 */
 import { createHmac, randomBytes, randomUUID } from "node:crypto";
+import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES } from "../shared/response-body.js";
 import { estimateSearchCost, type QuotaOperation } from "./cost.js";
 import type { QuotaCooldown, QuotaSnapshot } from "./contracts.js";
 import {
@@ -178,9 +179,9 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 	const defaultCooldownMs = options.cooldownMs;
 	validateDuration(defaultCooldownMs, "cooldownMs");
 	const deadlineMs = options.deadlineMs ?? 2_000;
-	const maxResponseBytes = options.maxResponseBytes ?? 5 * 1024 * 1024;
+	const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
 	if (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1 || deadlineMs > 60_000) throw new Error("deadlineMs must be from 1 to 60000");
-	if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > 20 * 1024 * 1024) throw new Error("maxResponseBytes is outside the supported range");
+	if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes < 1 || maxResponseBytes > MAX_RESPONSE_BYTES) throw new Error("maxResponseBytes is outside the supported range");
 	const stateStore = options.stateStore ?? createMemoryQuotaStateStore();
 	const lookup = options.lookup ?? lookupUsage;
 	const records = new Map<string, InternalRecord>();
@@ -353,7 +354,7 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 		}
 		if (input.signal?.aborted) throw abortError();
 		const responseLimit = input.maxResponseBytes ?? maxResponseBytes;
-		if (!Number.isSafeInteger(responseLimit) || responseLimit < 1 || responseLimit > 20 * 1024 * 1024) {
+		if (!Number.isSafeInteger(responseLimit) || responseLimit < 1 || responseLimit > MAX_RESPONSE_BYTES) {
 			throw new Error("maxResponseBytes is outside the supported range");
 		}
 		validateDuration(input.cooldownOverrideMs, "cooldownOverrideMs");

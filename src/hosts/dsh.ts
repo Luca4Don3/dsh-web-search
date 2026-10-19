@@ -23,6 +23,7 @@ import { createSearchEngine, clampResults, renderOutcome, type SearchOutcomeResu
 import type { SearchEngine } from "../search/contracts.js";
 import { fetchPage, FetchError } from "../fetch/index.js";
 import { DEFAULT_TIMEOUT_MS as DEFAULT_FETCH_TIMEOUT_MS, readWebFetchConfig } from "../fetch/config.js";
+import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES } from "../shared/response-body.js";
 
 export const name = "web-search";
 export const inject = ["web"];
@@ -34,14 +35,14 @@ export const Config = z.object({
 	allowBillable: z.boolean().default(false),
 	timeoutMs: z.number().step(1).min(1).max(60_000).default(25_000),
 	totalTimeoutMs: z.number().step(1).min(1_000).max(600_000).default(90_000),
-	maxResponseBytes: z.number().step(1).min(1).max(20 * 1024 * 1024).default(5 * 1024 * 1024),
+	maxResponseBytes: z.number().step(1).min(1).max(MAX_RESPONSE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),
 	maxChars: z.number().step(1).min(1).max(200_000).default(24_000),
 	retries: z.number().step(1).min(0).max(3).default(1),
 	cooldownOverrideMs: z.number().step(1).min(0).max(86_400_000),
 	stateDirectory: z.string(),
 	/** 抓取侧的整次预算，与搜索预算相互独立。 */
 	fetchTimeoutMs: z.number().step(1).min(1).max(60_000).default(20_000),
-	fetchMaxResponseBytes: z.number().step(1).min(1).max(20 * 1024 * 1024).default(5 * 1024 * 1024),
+	fetchMaxResponseBytes: z.number().step(1).min(1).max(MAX_RESPONSE_BYTES).default(DEFAULT_MAX_RESPONSE_BYTES),
 	fetchMaxChars: z.number().step(1).min(1).max(200_000).default(24_000),
 	fetchMaxRedirects: z.number().step(1).min(1).max(5).default(3),
 });
@@ -200,7 +201,7 @@ export function createPlugin(dependencies: { fetch?: typeof globalThis.fetch; en
 			const provider = new FreeFirstProvider(engine, config.maxChars ?? 24_000);
 			const fetchConfig = readWebFetchConfig({
 				PI_WEB_FETCH_TIMEOUT_MS: String(config.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
-				PI_WEB_FETCH_MAX_RESPONSE_BYTES: String(config.fetchMaxResponseBytes ?? 5 * 1024 * 1024),
+				PI_WEB_FETCH_MAX_RESPONSE_BYTES: String(config.fetchMaxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES),
 				PI_WEB_FETCH_MAX_CHARS: String(config.fetchMaxChars ?? 24_000),
 				PI_WEB_FETCH_MAX_REDIRECTS: String(config.fetchMaxRedirects ?? 3),
 			});
