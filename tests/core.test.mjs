@@ -51,9 +51,8 @@ test("默认路径不读取环境密钥；授权时先解析四把密钥但匿�
     fetch: async (_url, init) => { calls++; assert.equal(init.headers.authorization, undefined); return replyFor("exa"); },
   });
   const result = await authorized.search({ query: "free first" });
-  // DSH 宿主的默认解析集合仍是四家；SerpApi 只在显式声明 keyProviders 的宿主中解析。
-  // 匿名优先与"未授权不读密钥"两条语义不变。
-  assert.deepEqual([...resolved].sort(), ["exa", "firecrawl", "parallel", "tavily"]);
+  // 两个宿主统一解析全部计费后端（含 SerpApi）；匿名优先与"未授权不读密钥"不变。
+  assert.deepEqual([...resolved].sort(), ["exa", "firecrawl", "parallel", "serpapi", "tavily"]);
   assert.equal(calls, 2);
   assert.equal(result.accessTier, "anonymous");
   await authorized.dispose();

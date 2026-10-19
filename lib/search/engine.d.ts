@@ -50,7 +50,8 @@ declare function renderSources(sources: readonly SearchSource[], fallback: strin
 export { renderSources };
 export { readResponseTextLimited, DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES } from "../shared/response-body.js";
 export { parseMcpResponse } from "./mcp-protocol.js";
-export declare function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string;
+/** 脱敏统一走 `shared/redact`，Pi 与 DSH 使用同一份编码形态展开逻辑。 */
+export { redactSecrets, expandSecrets } from "../shared/redact.js";
 /** 构造独立搜索引擎；不读取宿主配置，只使用调用方给出的选项与依赖。 */
 export declare function createSearchEngine(options?: EngineOptions, deps?: SearchDependencies): SearchEngine & {
     searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult>;

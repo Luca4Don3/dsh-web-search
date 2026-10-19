@@ -10,10 +10,14 @@
  * @module dsh-web-search/pi-entry
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import piWebSearch, { type PiWebSearchOptions } from "./src/hosts/pi.js";
+import piWebSearch, { type WebSearchOptions } from "./src/hosts/pi.js";
 import piWebFetch, { type WebFetchOptions } from "./src/hosts/pi-fetch.js";
 
-export interface PiEntryOptions extends PiWebSearchOptions, WebFetchOptions {}
+/**
+ * 两个适配层的选项合并。两侧字段互不重叠：
+ * 搜索侧是凭据存储 / 额度管理器 / 时钟，抓取侧是解析与传输注入点。
+ */
+export type PiEntryOptions = WebSearchOptions & WebFetchOptions;
 
 /**
  * 注册 `web_search` 与 `web_fetch` 两个工具，以及 `/web-search-auth` 命令。

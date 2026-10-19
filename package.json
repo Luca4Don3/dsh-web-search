@@ -39,12 +39,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.mjs",
-    "check": "tsc -p tsconfig.json --noEmit",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.entry.json",
     "check:artifacts": "node scripts/copy-assets.mjs && node tests/check-artifacts.mjs",
     "test": "npm run build && npm run test:dsh && npm run test:pi",
     "test:dsh": "node --test tests/*.test.mjs",
     "test:pi": "node --test tests/pi/*.test.mjs tests/fetch/*.test.mjs",
-    "smoke": "npm run build && node tests/smoke.mjs"
+    "smoke": "npm run build && node tests/smoke.mjs",
+    "check:entry": "tsc -p tsconfig.entry.json"
   },
   "engines": {
     "node": ">=24"

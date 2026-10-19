@@ -68,13 +68,15 @@ test("单调总期限覆盖多个通道，忽略 signal 的 fetch、正文与 ke
     return new Response(new ReadableStream({ pull() { return new Promise(() => {}); }, cancel() { return new Promise(() => {}); } }));
   } });
   await assert.rejects(streamEngine.search({ query: "挂起正文" }), (error) => error.code === "TIMEOUT");
-  assert.equal(bodyCalls, 1);
+  // 单通道超时后继续尝试下一家；5 家都挂起才会耗尽总预算。
+  assert.ok(bodyCalls >= 1 && bodyCalls <= 5, `应尝试多个通道，实际 ${bodyCalls}`);
   await streamEngine.dispose();
 
   let keyCalls = 0;
   const keyEngine = core.createSearchEngine({ allowBillable: true, timeoutMs: 25 }, { resolveKey: () => { keyCalls++; return new Promise(() => {}); }, fetch: async () => { throw new Error("不得发请求"); } });
   await assert.rejects(keyEngine.search({ query: "挂起取钥" }), (error) => error.code === "TIMEOUT");
-  assert.equal(keyCalls, 4);
+  // 两个宿主统一解析全部计费后端（exa / parallel / tavily / firecrawl / serpapi）。
+  assert.equal(keyCalls, 5);
   await keyEngine.dispose();
 });
 

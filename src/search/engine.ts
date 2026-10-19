@@ -28,6 +28,7 @@ import { ANONYMOUS_PROVIDER_ORDER, BILLABLE_PROVIDER_ORDER, getProviderMetadata,
 import { parseMcpBlocks } from "./mcp-protocol.js";
 import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, readResponseTextLimited } from "../shared/response-body.js";
 import { parseRetryAfter, RETRY_AFTER_MAX_MS } from "../shared/retry-after.js";
+import { expandSecrets, redactSecrets } from "../shared/redact.js";
 import { createQuotaManager, type QuotaChannel } from "../quota/core.js";
 import { createPrivateQuotaStateStore } from "../quota/state-store.js";
 import { lookupUsage } from "../quota/usage.js";
@@ -104,10 +105,13 @@ const KEY_ENV: Readonly<Record<KeyProviderId, string>> = {
 };
 
 /**
- * 默认解析集合：DSH 侧历史只解析四家（SerpApi 仅 Pi 宿主启用）。
- * 需要 SerpApi 的宿主通过 {@link SearchDependencies.keyProviders} 显式声明。
+ * 默认解析集合：全部计费后端，与 `BILLABLE_PROVIDER_ORDER` 保持一致。
+ *
+ * 早期 DSH 实现只解析四家、SerpApi 仅 Pi 可用，这使同一个包在两个宿主上的
+ * 能力不同。既然对外承诺是一份内核，这里统一为全集；宿主如需限制，
+ * 通过 {@link SearchDependencies.keyProviders} 显式收窄。
  */
-const DEFAULT_KEY_PROVIDERS: readonly KeyProviderId[] = ["exa", "parallel", "tavily", "firecrawl"];
+const DEFAULT_KEY_PROVIDERS: readonly KeyProviderId[] = BILLABLE_PROVIDER_ORDER;
 
 /** 整次调用的绝对截止时间：单调时钟锚定，不受系统时间调整影响。 */
 class TotalBudget {
@@ -223,31 +227,8 @@ export { renderSources };
 export { readResponseTextLimited, DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES } from "../shared/response-body.js";
 export { parseMcpResponse } from "./mcp-protocol.js";
 
-/** 脱敏用变体：原始、JSON 转义、URL 编码、base64 等常见回显形态。 */
-function secretVariants(keys: ReadonlyMap<KeyProviderId, string | undefined>): string[] {
-	const values = new Set<string>();
-	for (const key of keys.values()) {
-		if (!key) continue;
-		values.add(key);
-		values.add(JSON.stringify(key).slice(1, -1));
-		const encoded = encodeURIComponent(key);
-		values.add(encoded);
-		values.add(encodeURIComponent(encoded));
-		values.add(encoded.replace(/%[0-9A-F]{2}/gu, (part) => part.toLowerCase()));
-		values.add(Buffer.from(key, "utf8").toString("base64"));
-		values.add(Buffer.from(key, "utf8").toString("base64url"));
-	}
-	return [...values].filter(Boolean).sort((a, b) => b.length - a.length);
-}
-
-export function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string {
-	let safe = value;
-	for (const secret of secrets) {
-		if (secret === undefined || secret.length === 0) continue;
-		safe = safe.split(secret).join("***");
-	}
-	return safe;
-}
+/** 脱敏统一走 `shared/redact`，Pi 与 DSH 使用同一份编码形态展开逻辑。 */
+export { redactSecrets, expandSecrets } from "../shared/redact.js";
 
 /** 构造独立搜索引擎；不读取宿主配置，只使用调用方给出的选项与依赖。 */
 export function createSearchEngine(options: EngineOptions = {}, deps: SearchDependencies = {}): SearchEngine & { searchDetailed(request: SearchRequest, signal?: AbortSignal): Promise<SearchOutcomeResult> } {
@@ -449,8 +430,10 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 			return parsed;
 		} catch (error) {
 			if (isAborted(signal)) throw abortError();
-			// 单请求计时器到点即视为整次调用超时：后续通道不再尝试，也不重试。
-			if (timedOut || budget.exhausted) throw new BudgetExhaustedError();
+			// 只有整次调用的总预算耗尽才终止；单个通道超时应当切换下一家继续尝试。
+			// 这两者必须分开：把通道超时当成总预算耗尽会让一个慢服务商拖垮整次搜索。
+			if (budget.exhausted) throw new BudgetExhaustedError();
+			if (timedOut) throw new BackendError(`${backend} 请求超时`, "timeout");
 			const failure = error instanceof BackendError ? error : new BackendError("搜索请求失败", "network_error");
 			if (dispatched) {
 				if (failure.kind === "rate_limited") {
@@ -542,7 +525,8 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 			await withinBudget(Promise.resolve().then(() => quota.initialize()), budget, controller.signal);
 			checkAborted(controller.signal);
 			const keys = settings.allowBillable === true ? await withinBudget(resolveKeys(controller.signal), budget, controller.signal) : new Map<KeyProviderId, string | undefined>();
-			const secrets = settings.allowBillable === true ? secretVariants(keys) : [];
+			// 展开一次全部编码形态，后续正文与来源替换都复用这一份列表。
+			const secrets = settings.allowBillable === true ? expandSecrets([...keys.values()]) : [];
 			const candidates = candidatesFor(request, settings.allowBillable === true);
 			const failures: SearchFailure[] = [];
 			const warnings: string[] = [];

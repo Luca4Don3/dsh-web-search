@@ -1,17 +1,19 @@
 /**
- * web_fetch：本地优先的网页正文抓取扩展。
+ * Pi 宿主适配层：把 `web_fetch` 注册为模型工具。
  *
- * - 只读取调用方给出的公开 URL，不执行网页脚本，不携带 Cookie / Authorization。
- * - 初始解析、逐跳重定向、连接与正文读取共享同一绝对截止时间。
- * - 同步提取前后检查截止时间，不返回过期结果；不启用任何远程回退。
+ * 执行逻辑全部委托给宿主无关内核 {@link fetchPage}：目标校验、逐跳重定向、
+ * 绝对截止时间、字符集解码与正文提取都只有一份实现。这里只保留
+ * Pi 特有的部分——参数 schema、错误到 Pi 工具错误的映射、以及 details 形态。
  */
-import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type FetchDetails, type FetchMode } from "../fetch/params.js";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { type WebFetchConfig } from "../fetch/config.js";
 import { type FetchErrorKind } from "../fetch/errors.js";
-import { resolveFetchTarget } from "../fetch/transport/url-policy.js";
+import { type FetchDetails, type FetchMode } from "../fetch/params.js";
 import { extractContent } from "../fetch/extract/index.js";
+import { resolveFetchTarget } from "../fetch/transport/url-policy.js";
+import { httpFetch } from "../fetch/transport/http-client.js";
+import { type FetchDependencies } from "../fetch/index.js";
 /** web_fetch 工具的模型可见参数表。 */
 export declare const WebFetchParams: Type.TObject<{
     url: Type.TString;
@@ -21,27 +23,7 @@ export declare const WebFetchParams: Type.TObject<{
 export type WebFetchDetails = FetchDetails;
 export type { WebFetchConfig, FetchErrorKind, FetchMode };
 /** 抓取与提取的依赖；默认走真实实现，测试可整体注入。 */
-export interface WebFetchDependencies {
-    resolveTarget?: (url: string, signal?: AbortSignal) => ReturnType<typeof resolveFetchTarget>;
-    fetchPage?: (request: {
-        url: URL;
-        target: {
-            address: string;
-            family: 4 | 6;
-        };
-        signal?: AbortSignal;
-        timeoutMs: number;
-        deadlineMs: number;
-        maxResponseBytes: number;
-        maxRedirects: number;
-    }) => Promise<{
-        body: string;
-        contentType: string;
-        finalUrl: URL;
-        redirectCount: number;
-        statusCode: number;
-    }>;
-    extract?: typeof extractContent;
+export interface WebFetchDependencies extends FetchDependencies {
 }
 /** 可注入配置与依赖；测试只替换需要替换的部分。 */
 export interface WebFetchOptions extends WebFetchDependencies {
@@ -49,3 +31,4 @@ export interface WebFetchOptions extends WebFetchDependencies {
 }
 /** 注册 `web_fetch` 工具。 */
 export default function piWebFetch(pi: ExtensionAPI, options?: WebFetchOptions): void;
+export { extractContent, resolveFetchTarget, httpFetch };
