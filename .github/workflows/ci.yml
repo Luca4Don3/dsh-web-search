@@ -19,11 +19,8 @@ jobs:
           cache: npm
       - name: 安装局部依赖且禁止依赖脚本
         run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: 严格类型检查
-        run: npm run check
-      - name: DSH 兼容层与内核离线验证
-        run: npm run test:dsh
-      - name: 安装 Pi 运行时（Pi 扩展用例需要 jiti 与 typebox）
+      # 类型检查覆盖两个宿主适配层，因此 Pi 运行时必须先于 tsc 安装。
+      - name: 安装 Pi 运行时
         run: npm install -g @earendil-works/pi-coding-agent@1.1.0
       - name: 链接 Pi 运行时依赖
         run: |
@@ -35,6 +32,10 @@ jobs:
           for p in pi-ai pi-agent-core pi-tui; do
             ln -sfn "$PI_PKG/node_modules/@earendil-works/$p" "node_modules/@earendil-works/$p"
           done
+      - name: 严格类型检查
+        run: npm run check
+      - name: DSH 兼容层与内核离线验证
+        run: npm run test:dsh
       - name: Pi 搜索与抓取离线验证
         run: npm run test:pi
       - name: 编译产物必须随源码提交且保持一致
