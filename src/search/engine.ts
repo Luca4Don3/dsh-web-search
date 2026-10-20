@@ -123,7 +123,7 @@ const DEFAULT_NUM_RESULTS = 8;
 const MAX_TEXT_CHARS = 24_000;
 const RETRY_BASE_MS = 400;
 const RETRY_MAX_WAIT_MS = 5_000;
-const USER_AGENT = "dsh-web-search/0.2.0";
+const USER_AGENT = "dsh-web-search/0.2.1";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";

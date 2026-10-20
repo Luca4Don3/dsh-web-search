@@ -215,7 +215,7 @@ test("请求头白名单不含 Cookie 与 Authorization", async () => {
 	await withServer((request, response) => {
 		assert.equal(request.headers.cookie, undefined);
 		assert.equal(request.headers.authorization, undefined);
-		assert.equal(request.headers["user-agent"], "pi-web-fetch/0.1.0-beta.2");
+		assert.equal(request.headers["user-agent"], "dsh-web-search/0.2.1");
 		send(response, "ok");
 	}, async (base) => {
 		const result = await client.httpFetch({ ...baseRequest(base), resolveTarget: localResolver(base) });
