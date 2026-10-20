@@ -127,6 +127,31 @@ function findElementRange(html: string, tag: string, from = 0, accept?: (attribu
 	return best;
 }
 
+/**
+ * 只在可判定为站点导航时剔除 `<header>`。
+ *
+ * 文章常把主标题与摘要放进 `<header>`；无条件删除会把正文头部一起丢掉。
+ * 判据：内部含 `<nav>`，或链接密集且纯文本很短（典型的菜单条）。
+ */
+function stripSiteHeaders(html: string): string {
+	const ranges: Array<{ start: number; end: number }> = [];
+	let cursor = 0;
+	for (let token = findTagToken(html, "header", cursor); token !== undefined; token = findTagToken(html, "header", cursor)) {
+		cursor = token.end;
+		if (token.closing || token.selfClosing) continue;
+		const closing = findClosingTag(html, "header", cursor);
+		if (closing === undefined) continue;
+		const inner = html.slice(token.end, closing.start);
+		const links = (inner.match(/<a\b/giu) ?? []).length;
+		const text = inner.replace(/<[^>]*>/gu, "").trim();
+		if (/<nav\b/iu.test(inner) || (links >= 3 && text.length < 200)) ranges.push({ start: token.start, end: closing.end });
+		cursor = closing.end;
+	}
+	let result = html;
+	for (const range of ranges.reverse()) result = result.slice(0, range.start) + result.slice(range.end);
+	return result;
+}
+
 function removeElements(html: string, tags: readonly string[]): string {
 	for (const tag of tags) {
 		const parts: string[] = [];
@@ -204,7 +229,9 @@ export function stripNoise(html: string): string {
 /** 原始文本区域：内部内容不参与标签解析，其中的容器标签不构成正文候选。 */
 function rawTextRanges(html: string): Array<{ start: number; end: number }> {
 	const ranges: Array<{ start: number; end: number }> = [];
-	for (const tag of ["textarea", "title"]) {
+	// iframe/xmp/noembed/noframes/plaintext 同样是"到结束标签为止都是文本"的容器，
+	// 里面的 <main>/<article> 只是字面量，不构成正文候选。
+	for (const tag of ["textarea", "title", "iframe", "xmp", "noembed", "noframes", "plaintext"]) {
 		let cursor = 0;
 		for (let token = findTagToken(html, tag, cursor); token !== undefined; token = findTagToken(html, tag, cursor)) {
 			cursor = token.end;
@@ -253,10 +280,10 @@ export function pickContainer(html: string): string {
 			if (content.trim().length === 0) continue;
 			// 选中 main/article/文档容器时，其中的 header 属于文章本身，必须保留；
 			// 只有回退到 body 时才把站点级 header 当噪声剔除。
-			return candidate.tag === "body" ? removeElements(content, ["header"]) : content;
+			return candidate.tag === "body" ? stripSiteHeaders(content) : content;
 		}
 	}
-	return removeElements(html, ["header"]);
+	return stripSiteHeaders(html);
 }
 
 /**
@@ -725,6 +752,9 @@ function truncateMarkdown(markdown: string, maxChars: number): string {
  * 只有内容长度严格大于 maxChars 时才设置 truncated。
  */
 export function extractContent(body: string, contentType: string, mode: FetchMode, maxChars: number, baseUrl?: URL): ExtractionResult {
+	// 与 fetchPage 使用同一套模式校验：提取入口本身也要拒绝未知模式，
+	// 否则直接调用方会静默拿到非预期分支的结果。
+	if (mode !== "auto" && mode !== "article" && mode !== "text") throw new FetchError("mode 不受支持", "invalid_url");
 	const { type, subtype } = normalizeContentType(contentType);
 	const isHtml = subtype === "html" || subtype === "xhtml+xml" || (type === "" && looksLikeHtml(body));
 	const isMarkdown = subtype === "markdown" || subtype === "x-markdown" || subtype === "md";

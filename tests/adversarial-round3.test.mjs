@@ -12,7 +12,12 @@ const redact = await import(new URL("../lib/shared/redact.js", import.meta.url))
 const core = await import(new URL("../lib/search/core.js", import.meta.url));
 const dsh = await import(new URL("../lib/hosts/dsh.js", import.meta.url));
 
-const run = (html) => extract.extractContent(html, "text/html", "markdown", 24_000).markdown;
+// 合法模式只有 auto／article／text：这里用 auto，避免用不存在的模式绕过校验。
+const run = (html) => extract.extractContent(html, "text/html", "auto", 24_000).markdown;
+
+test("提取模式校验：非法模式必须被拒绝", () => {
+  assert.throws(() => extract.extractContent("<p>x</p>", "text/html", "markdown", 24_000), /mode 不受支持/u);
+});
 
 test("未闭合 meta 标签不会拖慢标题提取", () => {
   const evil = `<html><head><title>ok</title></head><body>${"<meta ".repeat(90_000)}</body></html>`;
@@ -65,9 +70,11 @@ test("文章内部的标题与摘要不被当成站点噪声删除", () => {
   assert.ok(markdown.includes("正文段落"));
 });
 
-test("只有 body 时站点 header 仍按噪声剔除", () => {
+// 第四轮调整：无法判定为导航的 header 一律保留。
+// 纯文本 header 与文章头在结构上无法区分，删除它会丢掉真实标题；
+// 只有含 <nav> 或链接密集的菜单条才会被剔除。
+test("只有 body 时无法判定为导航的 header 保留", () => {
   const markdown = run("<html><body><header>站点导航</header><p>正文段落</p></body></html>");
-  assert.ok(!markdown.includes("站点导航"));
   assert.ok(markdown.includes("正文段落"));
 });
 
