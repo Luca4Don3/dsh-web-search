@@ -240,3 +240,43 @@ test("墙钟回拨不延长总预算", async () => {
 		process.env = saved;
 	}
 });
+
+// ---- 第五轮复核补充 ----
+
+test("未闭合 header 不导致平方级扫描", () => {
+  // 旧实现对每个未闭合 <header> 都回扫剩余输入；128KB 输入曾超过 1.5 秒。
+  const evil = "<html><body>" + "<header>".repeat(18_000) + "<p>正文</p></body></html>";
+  const started = performance.now();
+  run(evil);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 800, `解析耗时 ${Math.round(elapsed)}ms，应保持线性`);
+});
+
+test("带文章级标题的 header 即使链接密集也保留", () => {
+  const html = "<html><body><header><h1>文章标题</h1>"
+    + '<a href="/a">参考一</a><a href="/b">参考二</a><a href="/c">参考三</a>'
+    + "</header><p>正文段落</p></body></html>";
+  const markdown = run(html);
+  assert.ok(markdown.includes("文章标题"), "含 h1 的 header 属于文章结构，必须保留");
+  assert.ok(markdown.includes("正文段落"));
+});
+
+test("跨实例写入时失败阶数接着磁盘推进", async () => {
+  const fixture = quotaFixture();
+  const first = fixture.make();
+  await first.initialize();
+  const second = fixture.make();
+  await second.initialize();
+  fixture.setNow(1_000);
+  first.recordFailure("tavily", "key", "rate_limited", { credential: fixture.credential });
+  await first.flush();
+  fixture.setNow(2_000);
+  first.recordFailure("tavily", "key", "rate_limited", { credential: fixture.credential });
+  await first.flush();
+  // second 仍持有空快照：它的第三次事件必须接着磁盘的阶数继续。
+  fixture.setNow(3_000);
+  second.recordFailure("tavily", "key", "rate_limited", { credential: fixture.credential });
+  await second.flush();
+  const entry = fixture.entries()[0];
+  assert.equal(entry.failureCount, 3, "三次失败后阶数应为 3");
+});
