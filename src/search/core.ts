@@ -57,8 +57,8 @@ export function httpKind(status: number, detail: string): SearchErrorKind {
 /**
  * 只接受不含内嵌凭据的可点击网页链接。
  *
- * 脚本、本地文件与内联数据不是可引用的来源；`https://user:pass@host` 也不行，
- * 那会把凭据带进搜索结果。
+ * 脚本、本地文件与内联数据不是可引用的来源；带内嵌凭据的地址
+ * （`https://<user>:<password>@host`）也不行，那会把凭据带进搜索结果。
  */
 export function isHttpUrl(value: string): boolean {
 	try {
