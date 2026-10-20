@@ -38,7 +38,7 @@ import { parseMcpBlocks } from "./mcp-protocol.js";
 import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, readResponseTextLimited } from "../shared/response-body.js";
 import { parseRetryAfter, RETRY_AFTER_MAX_MS } from "../shared/retry-after.js";
 import { safeSlice } from "../shared/truncate.js";
-import { expandSecrets, redactSecrets } from "../shared/redact.js";
+import { expandSecrets, MAX_SECRET_CHARS, redactSecrets } from "../shared/redact.js";
 import { createQuotaManager, type QuotaChannel } from "../quota/core.js";
 import { createPrivateQuotaStateStore } from "../quota/state-store.js";
 import { lookupUsage } from "../quota/usage.js";
@@ -124,7 +124,7 @@ const DEFAULT_NUM_RESULTS = 8;
 const MAX_TEXT_CHARS = 24_000;
 const RETRY_BASE_MS = 400;
 const RETRY_MAX_WAIT_MS = 5_000;
-const USER_AGENT = "dsh-web-search/0.2.4";
+const USER_AGENT = "dsh-web-search/0.2.5";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
@@ -475,7 +475,9 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 				try {
 					const body = await readResponseTextLimited(response, settings.maxResponseBytes, child);
 					// 先完整脱敏、再裁剪：反过来会在密钥中间截断，留下无法再被匹配的片段。
-					detail = clipDiagnostic(redactSecrets(errorDetailFrom(safeJson(body)) ?? "", secrets));
+					// 先截断再脱敏：诊断最多输出 300 字符，若先拿整段响应体（上限 5MB）
+					// 跑一遍脱敏，等于为了 300 字符阻塞事件循环。留出覆盖最长密钥的余量。
+					detail = clipDiagnostic(redactSecrets(clipDiagnostic(errorDetailFrom(safeJson(body)) ?? "", MAX_SECRET_CHARS * 2), secrets));
 				} catch (error) {
 					if (isAborted(signal)) throw abortError();
 					if (timedOut) throw error;

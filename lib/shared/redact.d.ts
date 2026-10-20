@@ -5,6 +5,8 @@
  * base64），只按原文替换会漏掉编码形式。搜索内核、Pi 适配层与认证层都必须走这里，
  * 否则同一份响应在不同宿主会得到不同的遮蔽结果。
  */
+/** 与搜索内核一致的密钥长度上限：脱敏覆盖范围内不存在"被跳过"的合法密钥。 */
+export declare const MAX_SECRET_CHARS = 4096;
 /** 单个密钥需要遮蔽的全部编码形态，按长度降序以便先替换长串。 */
 export declare function secretVariants(secret: string): string[];
 /** 把一组密钥展开成全部需要遮蔽的形态。 */

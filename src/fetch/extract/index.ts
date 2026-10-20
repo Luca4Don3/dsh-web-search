@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 
 import { FetchError } from "../errors.js";
 import type { FetchMode } from "../params.js";
+import { safeSlice } from "../../shared/truncate.js";
 
 export interface ExtractionResult {
 	readonly title?: string;
@@ -789,16 +790,6 @@ function normalizeContentType(contentType: string): { type: string; subtype: str
 /** 没有内容类型时按内容判断是否 HTML。 */
 function looksLikeHtml(body: string): boolean {
 	return /^\s*<(?:!doctype html|html|head|body|main|article|div|p)\b/iu.test(body);
-}
-
-function safeSlice(value: string, maxLength: number): string {
-	let end = Math.max(0, Math.min(value.length, maxLength));
-	if (end > 0 && end < value.length) {
-		const current = value.charCodeAt(end);
-		const previous = value.charCodeAt(end - 1);
-		if (current >= 0xdc00 && current <= 0xdfff && previous >= 0xd800 && previous <= 0xdbff) end--;
-	}
-	return value.slice(0, end);
 }
 
 interface OpenFence {

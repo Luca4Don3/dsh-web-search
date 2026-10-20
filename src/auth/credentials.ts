@@ -136,22 +136,39 @@ export function spawnExec(
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let onAbort: (() => void) | undefined;
+		// 独立进程组不再接收终端 Ctrl+C；进程退出时补一次整组清理，
+		// 避免宿主被中断后留下仍在访问密钥库的子进程。
+		const onExit = (): void => {
+			if (child.pid === undefined || process.platform === "win32") return;
+			try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已退出 */ }
+		};
+		process.on("exit", onExit);
 		/** 只允许第一个结果生效，并清理本次调用创建的定时器和取消监听。 */
 		const finish = (settle: () => void): void => {
 			if (settled) return;
 			settled = true;
 			if (timer !== undefined) clearTimeout(timer);
 			if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
+			process.removeListener("exit", onExit);
 			settle();
 		};
 		const kill = (): void => {
-			// 先按进程组终止（负 pid），失败再退回直接子进程。
-			if (child.pid !== undefined && process.platform !== "win32") {
-				try {
-					process.kill(-child.pid, "SIGKILL");
-					return;
-				} catch {
-					// 进程组可能已不存在，继续尝试直接终止。
+			if (child.pid !== undefined) {
+				if (process.platform === "win32") {
+					// Windows 没有进程组信号：用 taskkill 终止整棵进程树。
+					try {
+						spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" }).unref();
+						return;
+					} catch {
+						// 退回直接终止。
+					}
+				} else {
+					try {
+						process.kill(-child.pid, "SIGKILL");
+						return;
+					} catch {
+						// 进程组可能已不存在，继续尝试直接终止。
+					}
 				}
 			}
 			try {

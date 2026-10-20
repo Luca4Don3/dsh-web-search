@@ -52,7 +52,10 @@ const MAX_ENTRIES = 512;
 /** 冷却结束超过这个时长就不再保留：与额度管理器的历史保留期一致。 */
 const EXPIRED_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_STATE_FILES = MAX_ENTRIES;
-const MAX_STATE_BYTES = 64 * 1024;
+// 必须能容纳 MAX_ENTRIES 条：单条约 190–260 字节，64KB 在约 290 条就会
+// 先于条目数上限触发，把"容量满"误判成"文件损坏"，也让条目数分支永远到不了。
+// 512 × 260 ≈ 133KB，取 256KB 留一倍余量。
+const MAX_STATE_BYTES = 256 * 1024;
 const MAX_ENTRY_BYTES = 4096;
 const LOCK_WAIT_MS = 250;
 const LOCK_RETRY_MS = 10;
@@ -68,16 +71,21 @@ function cloneState(state: PersistedQuotaState): PersistedQuotaState {
 	return { version: 1, salt: state.salt, entries: state.entries.map((entry) => ({ ...entry })) };
 }
 
-function validateState(value: unknown): PersistedQuotaState | "unknown_version" | undefined {
+/** 字节超限是容量问题，必须与结构损坏区分，否则诊断会指向不存在的损坏。 */
+type StateValidation = PersistedQuotaState | "unknown_version" | "too_large" | undefined;
+
+function validateState(value: unknown): StateValidation {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
-	try { if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) return undefined; } catch { return undefined; }
+	try { if (Buffer.byteLength(JSON.stringify(value)) > MAX_STATE_BYTES) return "too_large"; } catch { return undefined; }
 	const record = value as Record<string, unknown>;
 	if (record.version !== 1) return "unknown_version";
 	if (Object.keys(record).some((key) => !["version", "salt", "entries"].includes(key))) return undefined;
 	if (typeof record.salt !== "string" || !/^[A-Za-z0-9+/]{43}=$/u.test(record.salt)) return undefined;
 	const salt = Buffer.from(record.salt, "base64");
 	if (salt.byteLength !== 32 || salt.toString("base64") !== record.salt) return undefined;
-	if (!Array.isArray(record.entries) || record.entries.length > MAX_ENTRIES) return undefined;
+	if (!Array.isArray(record.entries)) return undefined;
+	// 条目数超限同样是容量问题，不能按损坏上报。
+	if (record.entries.length > MAX_ENTRIES) return "too_large";
 	const entries: PersistedQuotaEntry[] = [];
 	for (const item of record.entries) {
 		if (item === null || typeof item !== "object" || Array.isArray(item)) return undefined;
@@ -221,7 +229,7 @@ async function safeReadStateFile(path: string): Promise<PersistedQuotaEntry | "m
 	if (row.version !== 1) return "unknown_version";
 	if (Object.keys(row).some((key) => !["version", "entry"].includes(key))) return "corrupt";
 	const checked = validateState({ version: 1, salt: Buffer.alloc(32).toString("base64"), entries: [row.entry] });
-	if (checked === undefined || checked === "unknown_version") return "corrupt";
+	if (checked === undefined || checked === "unknown_version" || checked === "too_large") return "corrupt";
 	return checked.entries[0];
 }
 
@@ -323,7 +331,7 @@ async function readEntries(directory: string): Promise<
 	return { status: "ok", entries };
 }
 
-function checkSalt(value: unknown): PersistedQuotaState | "unknown_version" | undefined {
+function checkSalt(value: unknown): StateValidation {
 	if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
 	const row = value as Record<string, unknown>;
 	return validateState({ ...row, entries: [] });
@@ -358,7 +366,8 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 		try { decoded = JSON.parse(bytes.toString("utf8")); } catch { return "corrupt"; }
 		const checked = checkSalt(decoded);
 		if (checked === "unknown_version") return "unknown_version";
-		return checked === undefined ? "corrupt" : checked;
+		// 盐文件本身不该接近容量上限：超限按损坏处理。
+		return checked === undefined || checked === "too_large" ? "corrupt" : checked;
 	};
 
 	const load = async (): Promise<QuotaStateLoadResult> => {
@@ -416,6 +425,7 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 	const saveLocked = async (state: PersistedQuotaState): Promise<QuotaStateSaveResult> => {
 		if (blocked !== undefined) return { status: "unavailable", reason: "reason" in blocked ? blocked.reason : SAFE_CORRUPT };
 		const checked = validateState(state);
+		if (checked === "too_large") return { status: "unavailable", reason: SAFE_CAPACITY };
 		if (checked === undefined || checked === "unknown_version") return { status: "unavailable", reason: SAFE_CORRUPT };
 		let saltState = await readSalt();
 		if (saltState === "unknown_version") return { status: "unavailable", reason: SAFE_UNKNOWN };
@@ -484,6 +494,7 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 		try {
 			await ensureDirectory(base);
 			const checked = validateState(state);
+			if (checked === "too_large") return { status: "unavailable", reason: SAFE_CAPACITY };
 			if (checked === undefined || checked === "unknown_version") return { status: "unavailable", reason: SAFE_CORRUPT };
 			const lock = await acquireLock(lockPath);
 			if (lock === "timeout") return { status: "unavailable", reason: SAFE_LOCK_TIMEOUT };

@@ -7,7 +7,7 @@
  */
 
 /** 与搜索内核一致的密钥长度上限：脱敏覆盖范围内不存在"被跳过"的合法密钥。 */
-const MAX_SECRET_CHARS = 4096;
+export const MAX_SECRET_CHARS = 4096;
 
 /** 正则元字符：逐个转义，避免密钥里的符号被当成模式。 */
 const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/gu;

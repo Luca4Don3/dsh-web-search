@@ -78,6 +78,18 @@ test("MaskedInput：modifyOtherKeys 的可打印字符不会被吞掉", () => {
 	assert.equal(submitted, "fake!_token", "手输的 ! 必须进入密钥，而不是被静默丢弃");
 });
 
+test("MaskedInput：带 Ctrl/Alt 的 modifyOtherKeys 不插入字符也不报错", () => {
+	let submitted;
+	const input = new MaskedInput("modified keys", (value) => (submitted = value));
+	input.handleInput("abc");
+	input.handleInput("\x1b[27;5;33~"); // Ctrl+!
+	input.handleInput("\x1b[27;3;64~"); // Alt+@
+	const screen = input.render(80).join("\n");
+	assert.ok(!screen.includes("无法识别"), "已识别的快捷键不应报错");
+	input.handleInput("\r");
+	assert.equal(submitted, "abc", "快捷键不能被当作字符写进密钥");
+});
+
 test("MaskedInput：无法识别的转义序列会报错而不是静默丢弃", () => {
 	let submitted;
 	const input = new MaskedInput("unknown escape", (value) => (submitted = value));
