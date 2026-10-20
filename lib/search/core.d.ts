@@ -14,8 +14,12 @@ export declare class BackendError extends Error {
 export declare function statusKind(status: number): SearchErrorKind;
 export declare function messageKind(message: string): SearchErrorKind | undefined;
 export declare function httpKind(status: number, detail: string): SearchErrorKind;
-/** 只接受可点击的网页链接，不把脚本、本地文件或内联数据当作来源。 */
-/** 只接受不含内嵌凭据的 http(s) 链接：`https://user:pass@host` 不是可引用来源。 */
+/**
+ * 只接受不含内嵌凭据的可点击网页链接。
+ *
+ * 脚本、本地文件与内联数据不是可引用的来源；`https://user:pass@host` 也不行，
+ * 那会把凭据带进搜索结果。
+ */
 export declare function isHttpUrl(value: string): boolean;
 /** 提取各服务的错误文本；调用方必须在输出前脱敏。 */
 export declare function errorDetailFrom(payload: unknown): string | undefined;

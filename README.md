@@ -54,6 +54,28 @@ pi install <server_path>/dsh-web-search
 }
 ```
 
+#### 从旧版 `pi-extensions/extensions/web-search` 迁移
+
+旧版扩展同样注册 `web_search`，两者同时启用会**工具重名冲突**。迁移步骤：
+
+```bash
+# 1. 确认旧版位置（Pi 会自动加载该目录下的扩展）
+ls ~/.pi/agent/extensions/web-search
+
+# 2. 移走旧版（保留备份便于回滚；不要直接删除）
+mv ~/.pi/agent/extensions/web-search ~/.pi/agent/extensions/web-search.bak
+
+# 3. 安装新版
+pi install <server_path>/dsh-web-search
+
+# 4. 重启 Pi，确认只注册一份 web_search
+```
+
+若此前用 `pi install` 装过旧版，改用 `pi remove ~/pi-extensions/extensions/web-search` 卸载。
+`/web-search-auth` 命令名保持不变，密钥配置与冷却状态无需迁移。
+
+回滚：`mv ~/.pi/agent/extensions/web-search.bak ~/.pi/agent/extensions/web-search`。
+
 安装后可用 `/web-search-auth` 管理密钥。环境变量优先于系统密钥库。
 
 ## 配置
