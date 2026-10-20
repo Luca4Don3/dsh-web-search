@@ -1,11 +1,9 @@
 /** Web Search 路由配置与纯状态接口；不读取、不保存任何密钥。 */
 import type { ProviderId } from "./contracts.js";
 import type { QuotaSnapshot } from "../quota/contracts.js";
-export type RoutingStrategy = "free-first" | "key-first";
 export type SearchChannel = "free" | "key";
 export type Provider = "auto" | ProviderId;
 export interface RoutingConfig {
-    strategy: RoutingStrategy;
     allowBillable: boolean;
     freeCooldownMs: number;
     /** 仅显式设置环境变量时存在；undefined 使用额度管理器的分原因退避阶梯。 */
@@ -27,7 +25,6 @@ export interface RoutingChannelStatus {
 }
 /** 可供认证界面展示的路由状态，刻意不包含任何密钥字段。 */
 export interface RoutingStatus {
-    strategy: RoutingStrategy;
     allowBillable: boolean;
     freeCooldownMs: number;
     channels: RoutingChannelStatus[];

@@ -219,7 +219,6 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 				// 复用常驻管理器：菜单与本次搜索必须看到同一份冷却状态。
 				quotaManager,
 				allowBillable: routing.allowBillable,
-				strategy: routing.strategy,
 				timeoutMs: Math.min(requestConfig.timeoutMs, budget),
 				// 只把剩下的时间交给引擎，不再从零起算。
 				totalTimeoutMs: budget,

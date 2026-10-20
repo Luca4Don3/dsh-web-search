@@ -30,7 +30,6 @@ export interface SearchResult {
 /** 只允许非秘密配置；计费授权来自宿主可信配置，而不是搜索请求。 */
 export interface SearchOptions {
     readonly allowBillable?: boolean;
-    readonly strategy?: "free-first" | "key-first";
     readonly timeoutMs?: number;
     readonly totalTimeoutMs?: number;
     readonly maxResponseBytes?: number;

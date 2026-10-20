@@ -10,12 +10,10 @@ import {
 import type { ProviderId } from "./contracts.js";
 import type { QuotaSnapshot } from "../quota/contracts.js";
 
-export type RoutingStrategy = "free-first" | "key-first";
 export type SearchChannel = "free" | "key";
 export type Provider = "auto" | ProviderId;
 
 export interface RoutingConfig {
-	strategy: RoutingStrategy;
 	allowBillable: boolean;
 	freeCooldownMs: number;
 	/** 仅显式设置环境变量时存在；undefined 使用额度管理器的分原因退避阶梯。 */
@@ -40,7 +38,6 @@ export interface RoutingChannelStatus {
 
 /** 可供认证界面展示的路由状态，刻意不包含任何密钥字段。 */
 export interface RoutingStatus {
-	strategy: RoutingStrategy;
 	allowBillable: boolean;
 	freeCooldownMs: number;
 	channels: RoutingChannelStatus[];
@@ -55,16 +52,6 @@ const MAX_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 /** 读取并校验路由环境变量；显式非法值不会静默回退。 */
 export function readRoutingConfig(env: Readonly<Record<string, string | undefined>> = process.env): RoutingConfig {
-	const strategyValue = env.PI_WEB_SEARCH_ROUTING;
-	let strategy: RoutingStrategy = "free-first";
-	if (strategyValue !== undefined) {
-		const value = strategyValue.trim();
-		if (value !== "free-first" && value !== "key-first") {
-			throw new Error("PI_WEB_SEARCH_ROUTING 必须为 free-first 或 key-first");
-		}
-		strategy = value;
-	}
-
 	const newBillableValue = env.PI_WEB_SEARCH_ALLOW_BILLABLE;
 	const legacyPaidValue = env.PI_WEB_SEARCH_ALLOW_PAID;
 	const parsePermission = (name: string, raw: string | undefined): boolean | undefined => {
@@ -79,9 +66,6 @@ export function readRoutingConfig(env: Readonly<Record<string, string | undefine
 		throw new Error("PI_WEB_SEARCH_ALLOW_BILLABLE 与 PI_WEB_SEARCH_ALLOW_PAID 配置冲突");
 	}
 	const allowBillable = newBillable ?? legacyPaid ?? false;
-	if (allowBillable && strategy === "key-first") {
-		throw new Error("PI_WEB_SEARCH_ROUTING=key-first 与 PI_WEB_SEARCH_ALLOW_BILLABLE=true 冲突；请改用 free-first");
-	}
 
 	const cooldownValue = env.PI_WEB_SEARCH_FREE_COOLDOWN_MS;
 	let freeCooldownMs = 1_800_000;
@@ -100,7 +84,6 @@ export function readRoutingConfig(env: Readonly<Record<string, string | undefine
 	}
 
 	return {
-		strategy,
 		allowBillable,
 		freeCooldownMs,
 		...(cooldownValue === undefined ? {} : { cooldownOverrideMs: freeCooldownMs }),
@@ -109,13 +92,7 @@ export function readRoutingConfig(env: Readonly<Record<string, string | undefine
 
 /** 构造无需读取凭据的候选顺序；所有匿名后端先尝试，再按独立付费顺序延迟解析 Key。 */
 export function buildRouteCandidates(provider: Provider, config: RoutingConfig): RoutingStep[] {
-	if (config.strategy !== "free-first" && config.strategy !== "key-first") {
-		throw new Error("strategy 必须为 free-first 或 key-first");
-	}
 	if (provider !== "auto") getProviderMetadata(provider);
-	if (config.allowBillable && config.strategy === "key-first") {
-		throw new Error("PI_WEB_SEARCH_ROUTING=key-first 与 PI_WEB_SEARCH_ALLOW_BILLABLE=true 冲突；请改用 free-first");
-	}
 
 	const anonymous = provider === "auto"
 		? ANONYMOUS_PROVIDER_ORDER
@@ -155,7 +132,6 @@ export function getRoutingStatus(
 	quotaSnapshot?: QuotaSnapshot,
 ): RoutingStatus {
 	return {
-		strategy: config.strategy,
 		allowBillable: config.allowBillable,
 		freeCooldownMs: config.freeCooldownMs,
 		channels: channels.map((channel) => ({ ...channel })),

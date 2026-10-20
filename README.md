@@ -110,7 +110,6 @@ pi install <server_path>/dsh-web-search
 | --- | --- | --- |
 | `PI_WEB_SEARCH_ALLOW_BILLABLE` | `false` | 同 `allowBillable`，只接受 `true` / `false` |
 | `PI_WEB_SEARCH_ALLOW_PAID` | 未设置 | 旧开关别名，与上一项冲突时报错 |
-| `PI_WEB_SEARCH_ROUTING` | `free-first` | 路由策略；与计费授权同时为 `key-first` 时报错 |
 | `PI_WEB_SEARCH_TIMEOUT_MS` | `25000` | 单请求预算 |
 | `PI_WEB_SEARCH_TOTAL_TIMEOUT_MS` | `90000` | 整次调用预算 |
 | `PI_WEB_SEARCH_MAX_RESPONSE_BYTES` | `5242880` | 响应体上限 |

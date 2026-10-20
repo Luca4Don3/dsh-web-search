@@ -77,7 +77,7 @@ export interface SearchFailure {
 export const MAX_QUERY_CHARS = 2_000;
 
 export interface EngineOptions extends SearchOptions {
-	readonly strategy?: "free-first" | "key-first";
+
 	/**
 	 * 复用调用方已有的额度管理器。
 	 *
@@ -203,12 +203,6 @@ function validateOptions(options: EngineOptions): Required<Pick<SearchOptions, "
 		return result;
 	};
 	if (options.allowBillable !== undefined && typeof options.allowBillable !== "boolean") throw new SearchError("INVALID_CONFIG");
-	if (options.strategy !== undefined && options.strategy !== "free-first" && options.strategy !== "key-first") {
-		throw new SearchError("INVALID_CONFIG");
-	}
-	if (options.allowBillable === true && options.strategy === "key-first") {
-		throw new SearchError("INVALID_CONFIG");
-	}
 	// 上限与 PI_WEB_SEARCH_TIMEOUT_MS 的接受范围一致（120000），避免外层放行的
 	// 合法值在内核处被二次拒绝；下限保持宽松，内核作为库允许更短的测试预算。
 	const timeoutMs = int(options.timeoutMs, 25_000, 1, 120_000, "timeoutMs");
@@ -218,7 +212,6 @@ function validateOptions(options: EngineOptions): Required<Pick<SearchOptions, "
 	return {
 		...options,
 		allowBillable: options.allowBillable ?? false,
-		strategy: options.strategy ?? "free-first",
 		timeoutMs,
 		totalTimeoutMs: int(options.totalTimeoutMs, totalFallback, 1, 600_000, "totalTimeoutMs"),
 		maxResponseBytes: int(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, 1, MAX_RESPONSE_BYTES, "maxResponseBytes"),

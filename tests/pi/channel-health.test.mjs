@@ -37,10 +37,10 @@ test("冷却可禁用，快照不包含密钥字段", () => {
 	health.recordFailure("exa", "free", "quota_exhausted");
 	assert.deepEqual(health.snapshot().channels, []);
 	const status = routing.getRoutingStatus(
-		{ strategy: "free-first", allowBillable: false, freeCooldownMs: 0 },
+		{ allowBillable: false, freeCooldownMs: 0 },
 		health.snapshot().channels,
 	);
-	assert.deepEqual(status, { strategy: "free-first", allowBillable: false, freeCooldownMs: 0, channels: [] });
+	assert.deepEqual(status, { allowBillable: false, freeCooldownMs: 0, channels: [] });
 	assert.equal("keys" in status, false);
 });
 
@@ -52,7 +52,7 @@ test("上游 Retry-After 不得使通道冷却超过 24 小时", () => {
 
 test("默认禁用计费；auto 免费优先顺序及指定 provider 限制", () => {
 	const config = routing.readRoutingConfig({});
-	assert.deepEqual(config, { strategy: "free-first", allowBillable: false, freeCooldownMs: 1_800_000 });
+	assert.deepEqual(config, { allowBillable: false, freeCooldownMs: 1_800_000 });
 	assert.deepEqual(routing.buildRoutePlan("auto", allKeys, config), [
 		{ backend: "exa", channel: "free" },
 		{ backend: "tavily", channel: "free" },
@@ -104,29 +104,20 @@ test("新旧计费授权变量严格校验，旧变量仅作为显式别名", ()
 	assert.throws(() => routing.readRoutingConfig({ PI_WEB_SEARCH_ALLOW_PAID: "yes" }), /PI_WEB_SEARCH_ALLOW_PAID/);
 });
 
-test("未授权 key-first 保持匿名兼容；授权 key-first 明确要求迁移 free-first", () => {
-	// 未授权时 key-first 只保留匿名兼容；授权后 key-first 会与“免费通道全部优先”冲突，必须在读取配置时报错。
-	const keyFirst = routing.readRoutingConfig({ PI_WEB_SEARCH_ROUTING: "key-first" });
-	assert.deepEqual(routing.buildRoutePlan("auto", allKeys, keyFirst), [
+test("已移除的 PI_WEB_SEARCH_ROUTING 不再影响路由顺序", () => {
+	// key-first 曾是一个不改变任何顺序的配置项，已整体删除。
+	const config = routing.readRoutingConfig({ PI_WEB_SEARCH_ROUTING: "key-first" });
+	assert.deepEqual(config, { allowBillable: false, freeCooldownMs: 1_800_000 });
+	assert.deepEqual(routing.buildRoutePlan("auto", allKeys, config), [
 		{ backend: "exa", channel: "free" },
 		{ backend: "tavily", channel: "free" },
 		{ backend: "parallel", channel: "free" },
 		{ backend: "firecrawl", channel: "free" },
 		{ backend: "tinyfish", channel: "free" },
 	]);
-	assert.throws(() => routing.buildRoutePlan("serpapi", allKeys, keyFirst), /已被 PI_WEB_SEARCH_ALLOW_BILLABLE=false 禁用/);
-	assert.throws(
-		() => routing.readRoutingConfig({ PI_WEB_SEARCH_ROUTING: "key-first", PI_WEB_SEARCH_ALLOW_BILLABLE: "true" }),
-		/free-first|冲突/u,
-	);
 });
 
-test("显式非法策略报错并限制冷却上限", () => {
-	assert.throws(() => routing.readRoutingConfig({ PI_WEB_SEARCH_ROUTING: "sometimes" }), /PI_WEB_SEARCH_ROUTING/);
-	assert.throws(
-		() => routing.buildRoutePlan("auto", allKeys, { strategy: "sometimes", allowBillable: true, freeCooldownMs: 0 }),
-		/strategy/,
-	);
+test("冷却上限仍被限制", () => {
 	for (const value of ["-1", "1.5", "9007199254740992", "86400001", ""]) {
 		assert.throws(() => routing.readRoutingConfig({ PI_WEB_SEARCH_FREE_COOLDOWN_MS: value }), /PI_WEB_SEARCH_FREE_COOLDOWN_MS/);
 	}

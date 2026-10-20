@@ -32,7 +32,6 @@ export interface SearchFailure {
 /** 查询长度上限：宿主入口与内核共用一个数值，避免校验时机不一致。 */
 export declare const MAX_QUERY_CHARS = 2000;
 export interface EngineOptions extends SearchOptions {
-    readonly strategy?: "free-first" | "key-first";
     /**
      * 复用调用方已有的额度管理器。
      *

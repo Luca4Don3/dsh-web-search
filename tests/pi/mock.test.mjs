@@ -616,7 +616,7 @@ test("28. auto free-first：四匿名优先，再按计费顺序尝试密钥", a
 	});
 });
 
-test("29. 显式 provider 始终匿名优先，授权 key-first 明确拒绝", async () => {
+test("29. 显式 provider 始终匿名优先", async () => {
 	await withEnv({ EXA_API_KEY: "exa-key", PI_WEB_SEARCH_RETRIES: "0", PI_WEB_SEARCH_ALLOW_BILLABLE: "true" }, () =>
 		withFetch(
 			(url) => {
@@ -630,15 +630,7 @@ test("29. 显式 provider 始终匿名优先，授权 key-first 明确拒绝", a
 			},
 		),
 	);
-	await withEnv({ EXA_API_KEY: "exa-key", PI_WEB_SEARCH_RETRIES: "0", PI_WEB_SEARCH_ROUTING: "key-first", PI_WEB_SEARCH_ALLOW_BILLABLE: "true" }, () =>
-		withFetch(
-			() => { throw new Error("冲突配置不得发送请求"); },
-			async (getCalls) => {
-				await assert.rejects(tool.execute("t29b", { query: "x", provider: "exa" }), /free-first/u);
-				assert.equal(getCalls(), 0);
-			},
-		),
-	);
+	// key-first 已整体移除：显式 provider 在任何配置下都匿名优先。
 });
 
 test("30. Exa 免费额度提示归类为 quota_exhausted，近似普通文本不误判", async () => {

@@ -420,18 +420,6 @@ test("额度 API 仍受默认 5 MiB 正文上限约束", async () => {
 	});
 });
 
-test("key-first 与显式计费授权冲突时在读取任何 Key 前报错", async () => {
-	const reads = [];
-	const tool = setup({ store: createStore({}, reads) });
-	await withEnv({ PI_WEB_SEARCH_ROUTING: "key-first", PI_WEB_SEARCH_ALLOW_BILLABLE: "true", EXA_API_KEY: fakeKey("exa") }, async (envReads) => {
-		await withFetch(() => assert.fail("冲突配置不得请求网络"), async () => {
-			await assert.rejects(tool.execute("routing-conflict", { query: "查询" }), /free-first/u);
-			assert.deepEqual(reads, []);
-			assert.equal(envReads.EXA_API_KEY, 0);
-		});
-	});
-});
-
 test("HTTP 402 计为额度耗尽并使用较长冷却，不重试该通道", async () => {
 	const now = Date.UTC(2030, 0, 1);
 	const token = fakeKey("tavily");
