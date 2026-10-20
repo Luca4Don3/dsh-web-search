@@ -42,8 +42,8 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.entry.json",
     "check:artifacts": "node scripts/copy-assets.mjs && node tests/check-artifacts.mjs",
     "test": "npm run build && npm run test:dsh && npm run test:pi",
-    "test:dsh": "node --test tests/*.test.mjs",
-    "test:pi": "node --test tests/pi/*.test.mjs tests/fetch/*.test.mjs",
+    "test:dsh": "node --test --test-timeout=30000 tests/*.test.mjs",
+    "test:pi": "node --test --test-timeout=30000 tests/pi/*.test.mjs tests/fetch/*.test.mjs",
     "smoke": "npm run build && node tests/smoke.mjs",
     "check:entry": "tsc -p tsconfig.entry.json"
   },
