@@ -14,7 +14,12 @@ export declare function decodeEntities(value: string): string;
 export declare function stripNoise(html: string): string;
 /** 依次选择 main、article、常见文档容器与 body；同名嵌套元素会完整配对。 */
 export declare function pickContainer(html: string): string;
-/** 取 `<title>` 或 og:title。 */
+/**
+ * 取 `<title>` 或 og:title。
+ *
+ * 不用正则找 meta：`<meta[^>]+...` 在标签未闭合时会从每个候选起点回扫剩余文本，
+ * 对攻击者可控的网页就是平方级的同步耗时。这里改为单次线性标签扫描。
+ */
 export declare function extractTitle(html: string): string | undefined;
 /** 去掉标签并解码实体一次。 */
 export declare function stripTags(html: string): string;

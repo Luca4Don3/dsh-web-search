@@ -12,10 +12,12 @@ export declare class FetchError extends Error {
     readonly options?: {
         readonly statusCode?: number;
         readonly retryAfterMs?: number;
+        readonly finalUrl?: string;
     } | undefined;
     constructor(message: string, kind: FetchErrorKind, options?: {
         readonly statusCode?: number;
         readonly retryAfterMs?: number;
+        readonly finalUrl?: string;
     } | undefined);
     get retryable(): boolean;
 }

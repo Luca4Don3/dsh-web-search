@@ -17,6 +17,13 @@ export interface PersistedQuotaEntry {
 	until: number;
 	lastFailureAt: number;
 	updatedAt: number;
+	/**
+	 * 单调递增的逻辑序号，用于判断同一条目两次事件的先后。
+	 *
+	 * 不能只靠 `updatedAt`：墙钟回拨会让真实较新的事件拥有更小的时间戳，
+	 * 从而被旧墓碑压过（丢失新冷却）或让旧冷却复活。
+	 */
+	sequence?: number;
 	cleared?: boolean;
 }
 
@@ -70,13 +77,14 @@ function validateState(value: unknown): PersistedQuotaState | "unknown_version" 
 	for (const item of record.entries) {
 		if (item === null || typeof item !== "object" || Array.isArray(item)) return undefined;
 		const row = item as Record<string, unknown>;
-		if (Object.keys(row).some((key) => !["scopeId", "backend", "channel", "reason", "failureCount", "until", "lastFailureAt", "updatedAt", "cleared"].includes(key))) return undefined;
+		if (Object.keys(row).some((key) => !["scopeId", "backend", "channel", "reason", "failureCount", "until", "lastFailureAt", "updatedAt", "sequence", "cleared"].includes(key))) return undefined;
 		if (typeof row.scopeId !== "string" || !/^[a-f0-9]{64}$/u.test(row.scopeId)) return undefined;
 		if (!BACKENDS.has(row.backend as QuotaBackend) || (row.channel !== "anonymous" && row.channel !== "key") || !REASONS.has(row.reason as QuotaFailureReason)) return undefined;
 		if (!Number.isSafeInteger(row.failureCount) || (row.failureCount as number) < 0 || (row.failureCount as number) > 1_000_000) return undefined;
 		for (const field of ["until", "lastFailureAt", "updatedAt"] as const) {
 			if (!Number.isSafeInteger(row[field]) || (row[field] as number) < 0) return undefined;
 		}
+		if (row.sequence !== undefined && (!Number.isSafeInteger(row.sequence) || (row.sequence as number) < 0)) return undefined;
 		if (row.cleared !== undefined && typeof row.cleared !== "boolean") return undefined;
 		entries.push({
 			scopeId: row.scopeId,
@@ -87,6 +95,7 @@ function validateState(value: unknown): PersistedQuotaState | "unknown_version" 
 			until: row.until as number,
 			lastFailureAt: row.lastFailureAt as number,
 			updatedAt: row.updatedAt as number,
+			...((row.sequence as number | undefined) === undefined ? {} : { sequence: row.sequence as number }),
 			...(row.cleared === true ? { cleared: true } : {}),
 		});
 	}
@@ -97,21 +106,34 @@ function entryKey(entry: Pick<PersistedQuotaEntry, "scopeId" | "reason">): strin
 	return `${entry.scopeId}:${entry.reason}`;
 }
 
+/**
+ * 判断两次事件谁更新。
+ *
+ * 优先用逻辑序号：墙钟回拨后 `updatedAt` 不再可靠，旧事件会被误认为更新。
+ * 旧文件没有序号时退回墙钟比较，保持向后兼容。
+ */
+function orderKey(entry: PersistedQuotaEntry): number {
+	return entry.sequence ?? entry.updatedAt;
+}
+
 /** 并发更新只延长冷却、保留较大失败阶数；清除时间更新必须避免丢失新失败。 */
 function conservativeMerge(current: PersistedQuotaEntry | undefined, incoming: PersistedQuotaEntry): PersistedQuotaEntry {
 	if (current === undefined) return { ...incoming };
 	if (current.backend !== incoming.backend || current.channel !== incoming.channel || current.reason !== incoming.reason) return { ...current };
+	const incomingWins = orderKey(incoming) > orderKey(current);
+	const currentWins = orderKey(current) > orderKey(incoming);
 	if (current.cleared || incoming.cleared) {
-		if (incoming.updatedAt > current.updatedAt) return { ...incoming };
-		if (current.updatedAt > incoming.updatedAt) return { ...current };
+		if (incomingWins) return { ...incoming };
+		if (currentWins) return { ...current };
 		if (current.cleared !== incoming.cleared) return current.cleared ? { ...incoming } : { ...current };
 	}
 	return {
-		...((incoming.updatedAt > current.updatedAt ? incoming : current)),
+		...((incomingWins ? incoming : current)),
 		failureCount: Math.max(current.failureCount, incoming.failureCount),
 		until: Math.max(current.until, incoming.until),
 		lastFailureAt: Math.max(current.lastFailureAt, incoming.lastFailureAt),
 		updatedAt: Math.max(current.updatedAt, incoming.updatedAt),
+		sequence: Math.max(current.sequence ?? 0, incoming.sequence ?? 0),
 	};
 }
 
@@ -398,8 +420,16 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 		const read = await readEntries(base);
 		if (read.status !== "ok") return { status: "unavailable", reason: read.reason };
 		const mergedEntries = new Map(read.entries);
+		// 为本批写入分配一个高于磁盘上所有条目的逻辑序号：
+		// 这样即使墙钟回拨，新事件也不会被旧墓碑或旧冷却压过。
+		const highest = Math.max(
+			0,
+			...[...read.entries.values()].map((entry) => entry.sequence ?? 0),
+			...checked.entries.map((entry) => entry.sequence ?? 0),
+		);
+		const nextSequence = highest + 1;
 		const updates: PersistedQuotaEntry[] = [];
-		for (const incoming of checked.entries) {
+		for (const incoming of checked.entries.map((entry) => ({ ...entry, sequence: nextSequence }))) {
 			const key = entryKey(incoming);
 			const previous = mergedEntries.get(key);
 			const merged = conservativeMerge(previous, incoming);

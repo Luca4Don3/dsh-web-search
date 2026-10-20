@@ -214,13 +214,15 @@ export async function httpFetch(input: HttpFetchRequest): Promise<HttpFetchRespo
 					redirectCount += 1;
 					continue;
 				}
-				if (status === 401 || status === 403) throw new FetchError("目标要求认证", "http_error", { statusCode: status });
-				if (status === 404) throw new FetchError("目标不存在", "http_error", { statusCode: status });
+				// 错误状态也要带上**最终**地址：重定向后报错时，报告初始地址会误导调用方。
+				const where = { statusCode: status, finalUrl: url.toString() };
+				if (status === 401 || status === 403) throw new FetchError("目标要求认证", "http_error", where);
+				if (status === 404) throw new FetchError("目标不存在", "http_error", where);
 				if (status === 429) {
-					throw new FetchError("目标限流", "http_error", { statusCode: status, retryAfterMs: retryAfterHeader(headers["retry-after"]) });
+					throw new FetchError("目标限流", "http_error", { ...where, retryAfterMs: retryAfterHeader(headers["retry-after"]) });
 				}
-				if (status >= 500) throw new FetchError("目标服务端错误", "http_error", { statusCode: status });
-				if (status !== 200) throw new FetchError("目标返回了不受支持的状态", "http_error", { statusCode: status });
+				if (status >= 500) throw new FetchError("目标服务端错误", "http_error", where);
+				if (status !== 200) throw new FetchError("目标返回了不受支持的状态", "http_error", where);
 
 				const response = toWebResponse(raw, status);
 				const body = await deadline.run(() => readResponseTextLimited(response, input.maxResponseBytes, controller));

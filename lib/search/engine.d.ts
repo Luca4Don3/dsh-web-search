@@ -29,6 +29,8 @@ export interface SearchFailure {
     /** 上游给出的恢复时长；宿主据此区分 Retry-After 与固定退避。 */
     readonly retryAfterMs?: number;
 }
+/** 查询长度上限：宿主入口与内核共用一个数值，避免校验时机不一致。 */
+export declare const MAX_QUERY_CHARS = 2000;
 export interface EngineOptions extends SearchOptions {
     readonly strategy?: "free-first" | "key-first";
     /**

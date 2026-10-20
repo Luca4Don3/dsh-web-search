@@ -108,13 +108,18 @@ function secretMatchers(secret: string): RegExp[] {
  * 其余字符保持大小写敏感。用平直的正则逐个替换，不做跨形态的贪婪匹配。
  */
 export function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string {
-	let safe = value;
+	const matchers: RegExp[] = [];
 	for (const secret of secrets) {
 		if (secret === undefined || secret.length === 0) continue;
-		for (const matcher of secretMatchers(secret)) {
-			matcher.lastIndex = 0;
-			safe = safe.replace(matcher, "***");
-		}
+		matchers.push(...secretMatchers(secret));
+	}
+	// 跨**全部**密钥按长度降序：若短密钥先替换，会把长密钥的匹配切断，
+	// 只留下前缀被遮蔽、后缀仍然外泄。排序必须覆盖所有密钥的所有形态。
+	matchers.sort((left, right) => right.source.length - left.source.length);
+	let safe = value;
+	for (const matcher of matchers) {
+		matcher.lastIndex = 0;
+		safe = safe.replace(matcher, "***");
 	}
 	return safe;
 }

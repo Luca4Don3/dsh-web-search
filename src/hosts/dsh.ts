@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { createSearchEngine, clampResults, renderOutcome, type SearchOutcomeResult } from "../search/engine.js";
 import type { SearchEngine } from "../search/contracts.js";
-import { fetchPage, FetchError } from "../fetch/index.js";
+import { fetchPage, FetchError, type FetchDependencies } from "../fetch/index.js";
 import { DEFAULT_TIMEOUT_MS as DEFAULT_FETCH_TIMEOUT_MS, readWebFetchConfig } from "../fetch/config.js";
 import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES } from "../shared/response-body.js";
 
@@ -107,8 +107,14 @@ export class FreeFirstProvider implements WebSearchProvider {
 export class LocalFirstFetchProvider implements WebFetchProvider {
 	readonly id = FETCH_PROVIDER_ID;
 	private disposed = false;
+	/** 在途抓取的取消控制器：卸载时必须一并撤销，否则旧请求仍会返回正文。 */
+	private readonly active = new Set<AbortController>();
 
-	constructor(private readonly config: ReturnType<typeof readWebFetchConfig>) {}
+	constructor(
+		private readonly config: ReturnType<typeof readWebFetchConfig>,
+		/** 传输层依赖：生产用默认实现，测试可注入离线替身。 */
+		private readonly dependencies: FetchDependencies = {},
+	) {}
 
 	available(): boolean {
 		return !this.disposed;
@@ -116,8 +122,15 @@ export class LocalFirstFetchProvider implements WebFetchProvider {
 
 	async fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult> {
 		if (this.disposed) throw new WebError("抓取提供方已关闭", "WEB_PROVIDER_UNAVAILABLE");
+		const controller = new AbortController();
+		this.active.add(controller);
+		const forward = (): void => controller.abort();
+		signal?.addEventListener("abort", forward, { once: true });
+		if (signal?.aborted === true) controller.abort();
 		try {
-			const outcome = await fetchPage({ url: request.url }, this.config, {}, signal);
+			const outcome = await fetchPage({ url: request.url }, this.config, this.dependencies, controller.signal);
+			// 取消可能晚于响应到达：卸载后不得再把正文交出去。
+			if (this.disposed) throw new WebError("抓取提供方已关闭", "WEB_PROVIDER_UNAVAILABLE");
 			return {
 				url: outcome.finalUrl,
 				statusCode: outcome.statusCode,
@@ -125,16 +138,29 @@ export class LocalFirstFetchProvider implements WebFetchProvider {
 				truncated: outcome.truncated,
 			};
 		} catch (error) {
+			if (this.disposed) throw new WebError("抓取提供方已关闭", "WEB_PROVIDER_UNAVAILABLE");
 			// DSH 要求：成功取回的非 2xx 响应是结果；只有无法安全取回才是 WebError。
 			if (error instanceof FetchError && error.options?.statusCode !== undefined) {
-				return { url: request.url, statusCode: error.options.statusCode, body: { kind: "text", content: "" }, truncated: false };
+				// 错误状态同样要报告**最终**地址：重定向后报错时不能退回初始地址。
+				return {
+					url: error.options.finalUrl ?? request.url,
+					statusCode: error.options.statusCode,
+					body: { kind: "text", content: "" },
+					truncated: false,
+				};
 			}
 			throw new WebError(fetchMessage(error), fetchCode(error));
+		} finally {
+			signal?.removeEventListener("abort", forward);
+			this.active.delete(controller);
 		}
 	}
 
 	dispose(): void {
 		this.disposed = true;
+		// 卸载即撤销全部在途请求。
+		for (const controller of this.active) controller.abort();
+		this.active.clear();
 	}
 }
 

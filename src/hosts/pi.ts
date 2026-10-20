@@ -18,7 +18,7 @@ import type { ChannelHealth } from "../search/channel-health.js";
 import { getRoutingStatus, readRoutingConfig } from "../search/routing.js";
 import { createQuotaManager } from "../quota/core.js";
 import { createPrivateQuotaStateStore } from "../quota/state-store.js";
-import { clampResults, createSearchEngine, renderOutcome, redactSecrets } from "../search/engine.js";
+import { clampResults, createSearchEngine, MAX_QUERY_CHARS, renderOutcome, redactSecrets } from "../search/engine.js";
 import { getProviderMetadata, isProviderId, PROVIDER_IDS } from "../search/registry.js";
 import { readMaxResponseBytes } from "../shared/response-body.js";
 import { readSearchRequestConfig } from "../search/config.js";
@@ -38,6 +38,7 @@ const WebSearchParams = Type.Object({
 	query: Type.String({
 		description:
 			"The query. Describe the page you want in natural language instead of stacking keywords, e.g. 'a blog post comparing React and Vue performance'.",
+		maxLength: MAX_QUERY_CHARS,
 	}),
 	maxResults: Type.Optional(
 		Type.Integer({
@@ -58,6 +59,13 @@ function createAbortError(): DOMException {
 	return new DOMException("web_search aborted", "AbortError");
 }
 
+/** 预算耗尽的统一错误：与内核保持同一分类标记，宿主可见。 */
+function budgetExhaustedError(): Error {
+	const error = new Error("整次搜索的总时间预算已用尽 [budget_exhausted]");
+	(error as { code?: string }).code = "TIMEOUT";
+	return error;
+}
+
 /**
  * 用剩余预算约束只受外部取消影响的异步阶段（凭据解析）。
  *
@@ -72,7 +80,7 @@ async function withinDeadline<T>(promise: Promise<T>, totalMs: number, signal?: 
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let onAbort: (() => void) | undefined;
 	const expire = new Promise<never>((_resolve, reject) => {
-		timer = setTimeout(() => reject(new Error("整次搜索的总时间预算已用尽 [budget_exhausted]")), totalMs);
+		timer = setTimeout(() => reject(budgetExhaustedError()), totalMs);
 		onAbort = () => reject(createAbortError());
 		signal?.addEventListener("abort", onAbort, { once: true });
 	});
@@ -163,6 +171,8 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 			const routing = readRoutingConfig();
 			const query = params.query.trim();
 			if (query.length === 0) throw new Error("query must not be empty");
+			// 请求校验必须先于凭据访问：超长查询不该触发一次密钥库读取。
+			if (query.length > MAX_QUERY_CHARS) throw new Error(`query 不得超过 ${MAX_QUERY_CHARS} 个字符`);
 			const provider = params.provider ?? "auto";
 			if (provider !== "auto" && !isProviderId(provider)) throw new Error("未知的搜索后端");
 			const numResults = clampResults(params.maxResults);
@@ -174,12 +184,21 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 
 			// 整次调用只有一个绝对截止时间：凭据解析、搜索与收尾都从它倒扣。
 			// 各阶段分别计时会让总耗时翻倍（凭据用满一轮，引擎再拿满一轮）。
-			const deadline = Date.now() + requestConfig.totalTimeoutMs;
-			const remainingMs = (): number => Math.max(1, deadline - Date.now());
+			//
+			// 用单调时钟锚定：墙钟回拨不能把预算变长。这里不把过期值提升为
+			// 一毫秒——那会让已经过期的调用仍然派发一次真实请求。
+			const startedAt = performance.now();
+			const remainingMs = (): number => requestConfig.totalTimeoutMs - (performance.now() - startedAt);
+			const requireBudget = (): number => {
+				const left = remainingMs();
+				if (left <= 0) throw budgetExhaustedError();
+				// 单调时钟返回浮点毫秒，而内核按整数校验参数：向上取整后交出去。
+				return Math.ceil(left);
+			};
 
 			// 未授权计费时绝不读取密钥环境变量或系统密钥库。
 			const keys = routing.allowBillable
-				? await withinDeadline(resolvePlanKeys(provider, store, signal), remainingMs(), signal)
+				? await withinDeadline(resolvePlanKeys(provider, store, signal), requireBudget(), signal)
 				: emptyPlanKeys();
 			if (isAborted(signal)) throw createAbortError();
 			const secrets = BACKENDS.map((backend) => keys[backend]);
@@ -194,14 +213,16 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 				}
 			}
 
+			// 凭据阶段可能耗掉大部分预算：进入搜索前再核实一次同一绝对截止时间。
+			const budget = requireBudget();
 			const engine = createSearchEngine({
 				// 复用常驻管理器：菜单与本次搜索必须看到同一份冷却状态。
 				quotaManager,
 				allowBillable: routing.allowBillable,
 				strategy: routing.strategy,
-				timeoutMs: Math.min(requestConfig.timeoutMs, remainingMs()),
+				timeoutMs: Math.min(requestConfig.timeoutMs, budget),
 				// 只把剩下的时间交给引擎，不再从零起算。
-				totalTimeoutMs: remainingMs(),
+				totalTimeoutMs: budget,
 				maxResponseBytes,
 				retries: requestConfig.retries,
 				// 只有真正走磁盘持久化时才创建宿主目录：

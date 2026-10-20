@@ -10,6 +10,13 @@ export interface PersistedQuotaEntry {
     until: number;
     lastFailureAt: number;
     updatedAt: number;
+    /**
+     * 单调递增的逻辑序号，用于判断同一条目两次事件的先后。
+     *
+     * 不能只靠 `updatedAt`：墙钟回拨会让真实较新的事件拥有更小的时间戳，
+     * 从而被旧墓碑压过（丢失新冷却）或让旧冷却复活。
+     */
+    sequence?: number;
     cleared?: boolean;
 }
 export interface PersistedQuotaState {

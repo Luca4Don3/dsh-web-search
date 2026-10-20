@@ -11,6 +11,7 @@ import z from "@deepseek-ai/schemastery";
 import { type WebFetchProvider, type WebFetchRequest, type WebFetchResult, type WebSearchProvider, type WebSearchRequest, type WebSearchResult } from "@deepseek-ai/dsh-web";
 import { createSearchEngine, clampResults, renderOutcome, type SearchOutcomeResult } from "../search/engine.js";
 import type { SearchEngine } from "../search/contracts.js";
+import { type FetchDependencies } from "../fetch/index.js";
 import { readWebFetchConfig } from "../fetch/config.js";
 export declare const name = "web-search";
 export declare const inject: string[];
@@ -76,9 +77,15 @@ export declare class FreeFirstProvider implements WebSearchProvider {
 /** 抓取提供方：非 2xx 是结果而不是异常，符合 DSH 对抓取层的约定。 */
 export declare class LocalFirstFetchProvider implements WebFetchProvider {
     private readonly config;
+    /** 传输层依赖：生产用默认实现，测试可注入离线替身。 */
+    private readonly dependencies;
     readonly id = "local-first";
     private disposed;
-    constructor(config: ReturnType<typeof readWebFetchConfig>);
+    /** 在途抓取的取消控制器：卸载时必须一并撤销，否则旧请求仍会返回正文。 */
+    private readonly active;
+    constructor(config: ReturnType<typeof readWebFetchConfig>, 
+    /** 传输层依赖：生产用默认实现，测试可注入离线替身。 */
+    dependencies?: FetchDependencies);
     available(): boolean;
     fetch(request: WebFetchRequest, signal?: AbortSignal): Promise<WebFetchResult>;
     dispose(): void;

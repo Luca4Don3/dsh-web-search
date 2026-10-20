@@ -73,6 +73,9 @@ export interface SearchFailure {
 	readonly retryAfterMs?: number;
 }
 
+/** 查询长度上限：宿主入口与内核共用一个数值，避免校验时机不一致。 */
+export const MAX_QUERY_CHARS = 2_000;
+
 export interface EngineOptions extends SearchOptions {
 	readonly strategy?: "free-first" | "key-first";
 	/**
@@ -582,7 +585,7 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 		if (disposed) throw new SearchError("DISPOSED");
 		if (!request || typeof request !== "object" || typeof request.query !== "string") throw new SearchError("INVALID_REQUEST");
 		const query = request.query.trim();
-		if (query.length === 0 || query.length > 2_000) throw new SearchError("INVALID_REQUEST");
+		if (query.length === 0 || query.length > MAX_QUERY_CHARS) throw new SearchError("INVALID_REQUEST");
 		const maxResults = clampResults(request.maxResults);
 		const budget = new TotalBudget(settings.totalTimeoutMs);
 		const controller = new AbortController();

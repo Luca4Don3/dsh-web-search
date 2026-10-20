@@ -24,7 +24,7 @@ export class FetchError extends Error {
 	constructor(
 		message: string,
 		readonly kind: FetchErrorKind,
-		readonly options?: { readonly statusCode?: number; readonly retryAfterMs?: number },
+		readonly options?: { readonly statusCode?: number; readonly retryAfterMs?: number; readonly finalUrl?: string },
 	) {
 		super(message);
 		this.name = "FetchError";
