@@ -11,7 +11,6 @@
 - `src/search`、`src/fetch`、`src/quota`、`src/auth`、`src/shared`：宿主无关内核
 - `src/hosts/dsh.ts`：DSH 的 `ctx.web` 搜索与抓取提供方
 - `src/hosts/pi.ts`、`src/hosts/pi-fetch.ts`：Pi 的 `web_search` / `web_fetch` 工具与 `/web-search-auth`
-- `src/compat`：DSH 0.1.x 的额度与状态接口兼容层
 
 内核不 `import` 任何宿主 API；Pi 与 DSH 的依赖都是可选 peer，只装其中一个也能工作。
 
@@ -20,7 +19,8 @@
 - 两套重复实现（响应体上限常量、`Retry-After` 解析、有界读流）合并为共享模块，
   差异以配置项表达而不是复制代码
 - 新增 DSH 侧抓取提供方（`local-first`）
-- 新增 `src/compat` 兼容层，使 `0.1.x` 的调用方无需修改
+- 移除 DSH 0.1.x 的 `src/compat` 兼容层：它没有生产调用方，
+  却长期是 DSH 侧测试的主要被测对象，容易掩盖真实内核的覆盖缺口
 
 ## 许可证
 

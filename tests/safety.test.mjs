@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createSearchEngine } from "../lib/search/engine.js";
-import { QuotaManager, parseUsageBody } from "../lib/compat/quota.js";
 
 const result = (provider = "tavily") => provider === "tavily"
   ? new Response(JSON.stringify({ results: [{ url: "https://example.test/", title: "结果", content: "正文" }] }))
@@ -64,39 +63,6 @@ test("余额为正但不足以执行昂贵请求，不把较便宜请求标为�
   } finally { await engine.dispose(); }
 });
 
-test("一个余额查询消费者取消不影响其他消费者，零消费者取消后迟到结果不能回灌", async () => {
-  const manager = new QuotaManager({}, {});
-  await manager.initialize();
-  let finish;
-  let lookupSignal;
-  let calls = 0;
-  const lookup = (_backend, _key, signal) => { calls++; lookupSignal = signal; return new Promise((resolve) => { finish = resolve; }); };
-  const first = new AbortController();
-  const second = new AbortController();
-  const a = manager.balance("tavily", "synthetic-key", first.signal, lookup).then(() => null, (error) => error);
-  const b = manager.balance("tavily", "synthetic-key", second.signal, lookup);
-  await later();
-  first.abort();
-  assert.equal((await a).kind, "aborted");
-  assert.equal(lookupSignal.aborted, false);
-  finish({ known: true, remaining: 3 });
-  assert.deepEqual(await b, { known: true, remaining: 3 });
-  assert.equal(calls, 1);
-
-  const canceled = new AbortController();
-  const c = manager.balance("firecrawl", "other-synthetic-key", canceled.signal, lookup).then(() => null, (error) => error);
-  await later();
-  canceled.abort();
-  assert.equal((await c).kind, "aborted");
-  assert.equal(lookupSignal.aborted, true);
-  finish({ known: true, remaining: 999 });
-  await later();
-  assert.equal(manager.reserve("firecrawl", "other-synthetic-key", 8), undefined);
-  const balance = await manager.balance("firecrawl", "other-synthetic-key", new AbortController().signal, async () => ({ known: true, remaining: 2 }));
-  assert.equal(balance.remaining, 2);
-  manager.dispose();
-});
-
 test("搜索级取消也不破坏同实例另一个搜索的共享额度预检", async () => {
   let finish;
   let lookupSignal;
@@ -149,9 +115,4 @@ test("密钥严格验证但不截断，允许安全可打印 ASCII 与最长 409
     finally { await invalidEngine.dispose(); }
   }
   assert.equal(requests, 0);
-});
-
-test("usage 解析不把 null 视为免费或无限额度，不接受异常数字", () => {
-  assert.deepEqual(parseUsageBody("tavily", JSON.stringify({ key: { usage: 0, limit: null }, account: { plan_usage: 0, plan_limit: 2, paygo_usage: 0, paygo_limit: 1 } })), { known: true, remaining: 3 });
-  assert.deepEqual(parseUsageBody("firecrawl", JSON.stringify({ success: true, data: { remainingCredits: -1 } })), { known: false });
 });

@@ -19,7 +19,6 @@ src/
 ├── auth/       # 凭据解析与系统密钥库（macOS Keychain / Linux secret-tool）
 ├── fetch/      # 抓取内核：SSRF 校验、有界响应、HTML→Markdown
 ├── shared/     # 两个内核共用的有界响应体读取
-├── compat/     # DSH 0.1.x 的额度/状态接口兼容层
 └── hosts/
     ├── dsh.ts      # Cordis 插件：注册搜索与抓取提供方
     ├── pi.ts       # Pi：web_search 工具 + /web-search-auth
