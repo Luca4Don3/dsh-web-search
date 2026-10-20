@@ -68,6 +68,27 @@ test("MaskedInput：Kitty 可打印输入会解码为凭据字符", () => {
 	assert.equal(submitted, "k");
 });
 
+test("MaskedInput：modifyOtherKeys 的可打印字符不会被吞掉", () => {
+	let submitted;
+	const input = new MaskedInput("modifyOtherKeys", (value) => (submitted = value));
+	input.handleInput("fake");
+	input.handleInput("\x1b[27;2;33~"); // xterm modifyOtherKeys 的 Shift+1，即 "!"
+	input.handleInput("_token");
+	input.handleInput("\r");
+	assert.equal(submitted, "fake!_token", "手输的 ! 必须进入密钥，而不是被静默丢弃");
+});
+
+test("MaskedInput：无法识别的转义序列会报错而不是静默丢弃", () => {
+	let submitted;
+	const input = new MaskedInput("unknown escape", (value) => (submitted = value));
+	input.handleInput("abc");
+	input.handleInput("\x1b[999;9;9~"); // 未知协议
+	const screen = input.render(80).join("\n");
+	assert.ok(screen.includes("无法识别"), "未知按键必须可见地提示");
+	input.handleInput("\r");
+	assert.equal(submitted, undefined, "存在未识别输入时不得提交，避免保存错误密钥");
+});
+
 test("MaskedInput：粘贴结束标记跨数据块时完整识别并提交", () => {
 	let submitted;
 	const input = new MaskedInput("粘贴 key", (value) => (submitted = value));

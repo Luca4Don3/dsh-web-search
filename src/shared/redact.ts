@@ -6,6 +6,9 @@
  * 否则同一份响应在不同宿主会得到不同的遮蔽结果。
  */
 
+/** 与搜索内核一致的密钥长度上限：脱敏覆盖范围内不存在"被跳过"的合法密钥。 */
+const MAX_SECRET_CHARS = 4096;
+
 /** 正则元字符：逐个转义，避免密钥里的符号被当成模式。 */
 const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/gu;
 
@@ -157,8 +160,16 @@ export function redactSecrets(value: string, secrets: readonly (string | undefin
 	// 标准写法之外，再覆盖"任意字符被单独转义"的等价表示。
 	// 没有百分号的文本不需要走这条较重的路径。
 	if (!value.includes("%")) return safe;
-	for (const secret of secrets) {
-		if (secret === undefined || secret.length < 4 || secret.length > 128) continue;
+	// flexible 阶段也必须**跨全部密钥按长度降序**：短密钥先命中会把长密钥的
+	// 匹配切碎（`%41BCDEFGH` 若先匹配 ABCD，会留下 `***EFGH`）。
+	//
+	// 这里覆盖全部合法密钥长度（内核上限 4096）。早前版本设了 128 字符的静默
+	// 上限，超出者完全跳过编码覆盖——长 token（JWT、自建代理凭据）因此不受保护。
+	// 实测 630 KB 文本 + 5 个 4096 字符密钥约 44 ms，无需为此降级。
+	const flexible = secrets
+		.filter((secret): secret is string => typeof secret === "string" && secret.length >= 4 && secret.length <= MAX_SECRET_CHARS)
+		.sort((left, right) => right.length - left.length);
+	for (const secret of flexible) {
 		safe = safe.replace(new RegExp(flexibleEncodedPattern(secret), "gu"), "***");
 	}
 	return safe;

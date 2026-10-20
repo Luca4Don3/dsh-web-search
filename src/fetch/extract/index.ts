@@ -105,7 +105,7 @@ function findTagToken(html: string, tag: string, from: number): TagToken | undef
 				const end = tagEnd(html, nameEnd);
 				if (end < 0) return undefined;
 				const attributes = closing ? "" : html.slice(nameEnd, end - 1);
-				return { start: cursor, end, closing, selfClosing: !closing && attributes.trimEnd().endsWith("/"), attributes };
+				return { start: cursor, end, closing, selfClosing: !closing && isSelfClosingMarkup(attributes), attributes };
 			}
 			inTag = true;
 			cursor++;
@@ -121,6 +121,19 @@ function findTagToken(html: string, tag: string, from: number): TagToken | undef
 	return undefined;
 }
 
+/**
+ * 判断标签末尾的 `/` 是不是自闭合标记。
+ *
+ * `<br/>` 与 `<div class="a"/>` 是自闭合；但 `<main id=x/>` 里的 `/` 属于
+ * 无引号属性值 `x/`，HTML 允许该写法，不能把它当成空元素跳过。
+ */
+function isSelfClosingMarkup(attributes: string): boolean {
+	const trimmed = attributes.trimEnd();
+	if (!trimmed.endsWith("/")) return false;
+	const before = trimmed[trimmed.length - 2];
+	return before === undefined || before === " " || before === "\t" || before === "\n" || before === "\r" || before === "\f" || before === '"' || before === "'";
+}
+
 function findClosingTag(html: string, tag: string, from: number): TagToken | undefined {
 	let cursor = from;
 	for (let token = findTagToken(html, tag, cursor); token !== undefined; token = findTagToken(html, tag, cursor)) {
@@ -131,13 +144,23 @@ function findClosingTag(html: string, tag: string, from: number): TagToken | und
 }
 
 /** 单次栈扫描同名标签；嵌套配对正确，未闭合标签不会导致候选逐个重扫全文。 */
-function findElementRange(html: string, tag: string, from = 0, accept?: (attributes: string) => boolean): ElementRange | undefined {
+function findElementRange(
+	html: string,
+	tag: string,
+	from = 0,
+	accept?: (attributes: string) => boolean,
+	raw?: ReadonlyArray<{ start: number; end: number }>,
+): ElementRange | undefined {
 	const stack: Array<{ start: number; contentStart: number; attributes: string; accepted: boolean }> = [];
 	let best: ElementRange | undefined;
 	let earliestAcceptedStart: number | undefined;
 	let cursor = from;
+	const inRawText = raw === undefined ? undefined : rangeChecker(raw);
 	for (let token = findTagToken(html, tag, cursor); token !== undefined; token = findTagToken(html, tag, cursor)) {
 		cursor = token.end;
+		// 原始文本区域里的同名标签只是字面量，配对时必须整体跳过：
+		// 否则 <textarea></main></textarea> 里的 </main> 会提前结束外层容器。
+		if (inRawText !== undefined && inRawText(token.start)) continue;
 		if (token.closing) {
 			const open = stack.pop();
 			if (open?.start === earliestAcceptedStart) earliestAcceptedStart = undefined;
@@ -321,12 +344,19 @@ function rawTextRanges(html: string): Array<{ start: number; end: number }> {
 	return ranges.sort((left, right) => left.start - right.start);
 }
 
-function insideRanges(ranges: ReadonlyArray<{ start: number; end: number }>, position: number): boolean {
-	for (const range of ranges) {
-		if (position < range.start) return false;
-		if (position < range.end) return true;
-	}
-	return false;
+/**
+ * 生成"某位置是否落在区间内"的判定器。
+ *
+ * 区间已排序且调用方按位置单调递增查询，所以用游标前进而不是每次从头扫：
+ * 早前版本对每个候选重扫全部前缀区间，是平方级。
+ */
+function rangeChecker(ranges: ReadonlyArray<{ start: number; end: number }>): (position: number) => boolean {
+	let index = 0;
+	return (position: number): boolean => {
+		while (index < ranges.length && ranges[index]!.end <= position) index++;
+		const current = ranges[index];
+		return current !== undefined && current.start <= position;
+	};
 }
 
 const CONTENT_DIV = /(?:markdown-body|md-content|documentation|docs-content|post-content|article-content|entry-content|content-body)/iu;
@@ -345,10 +375,9 @@ export function pickContainer(html: string): string {
 	for (const candidate of candidates) {
 		let from = 0;
 		while (from < html.length) {
-			const range = findElementRange(html, candidate.tag, from, candidate.accept);
+			const range = findElementRange(html, candidate.tag, from, candidate.accept, raw);
 			if (range === undefined) break;
 			from = range.end;
-			if (insideRanges(raw, range.start)) continue;
 			const content = html.slice(range.contentStart, range.contentEnd);
 			if (content.trim().length === 0) continue;
 			// 选中 main/article/文档容器时，其中的 header 属于文章本身，必须保留；
@@ -591,11 +620,12 @@ function protectForFinalDecode(value: string): string {
 
 function convertLinks(html: string, baseUrl?: URL, deferFinalDecode = false): string {
 	return replacePairedElements(html, "a", (inner, attributes) => {
-		const hrefMatch = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/iu.exec(attributes);
+		// 必须按完整属性名取 href：正则的 `\bhref` 会把 data-href 也匹配上，
+		// 让页面上无关的属性劫持模型的引用地址。
+		const href = readAttribute(attributes, "href");
 		const rawLabel = stripMarkupRaw(inner).replace(/\s+/gu, " ").trim();
 		const label = escapeMarkdownLabel(decodeEntities(rawLabel));
 		if (label.length === 0) return "";
-		const href = hrefMatch?.[1] ?? hrefMatch?.[2] ?? hrefMatch?.[3];
 		const safe = href === undefined ? undefined : safeHref(href, baseUrl);
 		const outputLabel = deferFinalDecode ? protectForFinalDecode(label) : label;
 		if (safe === undefined) return outputLabel;

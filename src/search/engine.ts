@@ -37,6 +37,7 @@ import { ANONYMOUS_PROVIDER_ORDER, BILLABLE_PROVIDER_ORDER, getProviderMetadata,
 import { parseMcpBlocks } from "./mcp-protocol.js";
 import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, readResponseTextLimited } from "../shared/response-body.js";
 import { parseRetryAfter, RETRY_AFTER_MAX_MS } from "../shared/retry-after.js";
+import { safeSlice } from "../shared/truncate.js";
 import { expandSecrets, redactSecrets } from "../shared/redact.js";
 import { createQuotaManager, type QuotaChannel } from "../quota/core.js";
 import { createPrivateQuotaStateStore } from "../quota/state-store.js";
@@ -123,7 +124,7 @@ const DEFAULT_NUM_RESULTS = 8;
 const MAX_TEXT_CHARS = 24_000;
 const RETRY_BASE_MS = 400;
 const RETRY_MAX_WAIT_MS = 5_000;
-const USER_AGENT = "dsh-web-search/0.2.3";
+const USER_AGENT = "dsh-web-search/0.2.4";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
@@ -226,7 +227,8 @@ export function renderOutcome(query: string, outcome: { backend: ProviderId; tex
 	const heading = `[${label}] search: ${query}`;
 	const body = renderBody(outcome);
 	if (body.length <= maxChars) return `${heading}\n\n${body}`;
-	return `${heading}\n\n${body.slice(0, maxChars)}\n\n[content truncated to ${maxChars} chars${spillNote === undefined ? "" : `; full text: ${spillNote}`}]`;
+	// 用 safeSlice：直接 slice 可能切在代理对中间，留下孤立码元。
+	return `${heading}\n\n${safeSlice(body, maxChars)}\n\n[content truncated to ${maxChars} chars${spillNote === undefined ? "" : `; full text: ${spillNote}`}]`;
 }
 
 /** REST 后端的正文形态统一为 Markdown 来源列表。 */
@@ -801,7 +803,8 @@ function buildBoundedResult(result: SearchOutcomeResult, maxChars: number): Sear
 	if (sources.length === 0) throw new SearchError("OUTPUT_TOO_SMALL");
 	let content: string | undefined;
 	if (remaining > 0 && result.text.length > 0) {
-		content = result.text.length <= remaining ? result.text : result.text.slice(0, remaining);
+		// 正文同样走 safeSlice：切在代理对中间会留下孤立码元。
+		content = result.text.length <= remaining ? result.text : safeSlice(result.text, remaining);
 		if (result.text.length > remaining) truncated = true;
 	}
 	if (warning.length > 0) content = warning + (content ?? "");

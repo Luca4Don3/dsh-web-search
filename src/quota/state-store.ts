@@ -61,6 +61,8 @@ const SAFE_CORRUPT = "QUOTA_STATE_CORRUPT";
 const SAFE_UNKNOWN = "QUOTA_STATE_UNKNOWN_VERSION";
 const SAFE_LOCK_TIMEOUT = "QUOTA_STATE_LOCK_TIMEOUT";
 const SAFE_LOCK_UNAVAILABLE = "QUOTA_STATE_LOCK_UNAVAILABLE";
+/** 条目数达到上限：这是容量问题，不是文件损坏，诊断必须能区分。 */
+const SAFE_CAPACITY = "QUOTA_STATE_CAPACITY_EXCEEDED";
 
 function cloneState(state: PersistedQuotaState): PersistedQuotaState {
 	return { version: 1, salt: state.salt, entries: state.entries.map((entry) => ({ ...entry })) };
@@ -304,7 +306,8 @@ async function readEntries(directory: string): Promise<
 > {
 	const names = await readdir(directory);
 	const scopeFiles = names.filter((name) => name.startsWith("scope-"));
-	if (scopeFiles.length > MAX_STATE_FILES) return { status: "corrupt", reason: SAFE_CORRUPT };
+	// 超过容量上限时明确报告容量问题：按"损坏"上报会让使用者去排查不存在的文件损坏。
+	if (scopeFiles.length > MAX_STATE_FILES) return { status: "corrupt", reason: SAFE_CAPACITY };
 	const entries = new Map<string, PersistedQuotaEntry>();
 	for (const name of scopeFiles) {
 		const match = ENTRY_PATTERN.exec(name);
@@ -463,7 +466,7 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 				reclaimed.push(key);
 			}
 		}
-		if (mergedEntries.size > MAX_ENTRIES) return { status: "unavailable", reason: SAFE_CORRUPT };
+		if (mergedEntries.size > MAX_ENTRIES) return { status: "unavailable", reason: SAFE_CAPACITY };
 		for (const key of reclaimed) {
 			const [scopeId, reason] = key.split(":");
 			if (scopeId === undefined || reason === undefined) continue;

@@ -42,7 +42,7 @@
 | 14 | SENSITIVE_CONFIG_ASSIGNMENT | tests/pi/spill-failure.test.mjs:41 | `EXA_API_KEY: "offline-spill-secret"` | 误报：虚构值，名称已标明 offline |
 | 15 | SENSITIVE_CONFIG_ASSIGNMENT | tests/pi/spill-failure.test.mjs:42 | `PARALLEL_API_KEY: undefined` | 误报：清空环境变量 |
 | 16 | SENSITIVE_CONFIG_ASSIGNMENT | tests/pi/total-budget.test.mjs:28 | `EXA_API_KEY: undefined` | 误报：清空环境变量 |
-| 17 | CREDENTIAL_URL | git:commit-object:f3ee9dbd…:8 | 历史对象中的同一段注释 | 误报：与 #7 同源的历史版本 |
+| 17 | CREDENTIAL_URL | git:commit-object:f3ee9dbd…:8 | **可达提交的提交消息**中的同一段注释 | 误报：与 #7 同源；普通提交**无法**移除，见下文 |
 
 ## 待审项分类裁定（436 条）
 
@@ -64,6 +64,37 @@
 不再逐字复制触发模式。
 
 其余命中与上文分类一致，未发现新的真实凭据。
+
+## 位于提交消息中的命中（不可通过普通提交消除）
+
+第 17 条命中的文本在提交 `f3ee9db` 的**提交消息**里，不是工作区文件：
+
+- `git cat-file -t f3ee9db` 为 `commit`，`git rev-list --all` 包含它，
+  `main` 与 `origin/main` 都可达该提交。
+- 因此修改任何工作区文件、甚至删除 `SECURITY.md`，都不会让这条命中消失；
+  它会一直出现在 `git log` 里。
+- 消除它需要改写历史（如 `git filter-repo` 重写该提交及之后的所有提交），
+  这会改变全部提交 hash、影响已发布的 tag 与所有克隆。**本仓库不做此操作**，
+  除非仓库所有者明确要求。
+- 判定为误报的理由与 #7 相同：那是说明"带内嵌凭据的地址不被接受"的注解文字，
+  不含真实凭据。
+
+### 公开可见的个人标识
+
+每条提交都带作者邮箱（GitHub noreply 形式，如
+`105400920+Luca4Don3@users.noreply.github.com`），在 `git log`、
+托管平台与任何克隆中公开可见。这是使用 noreply 地址的常规结果，不是泄露；
+列在此处是为了让读者了解提交元数据的公开范围。
+
+### 关于本轮的破坏性清理
+
+按仓库所有者在会话中的明确要求（"都处理"），本轮执行了
+`git reflog expire --expire=now --all` 与 `git gc --prune=now`，
+删除了三个不在任何分支上的对象。
+
+**限制**：清理后 `git fsck --unreachable` 归零，被删对象已无法独立核验，
+下表的标识与摘要只是本仓库的单方面声明。这与项目约定中
+"不得为了审计通过删除或隐藏证据"存在张力——记录在此以便日后追溯。
 
 ## 已归档的不可达对象
 

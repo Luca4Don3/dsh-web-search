@@ -10,6 +10,21 @@ import {
 } from "@earendil-works/pi-tui";
 import { isValidSecretValue, MAX_SECRET_CHARS } from "./credentials.js";
 
+/**
+ * xterm 的 modifyOtherKeys 协议：`ESC [ 27 ; modifier ; codepoint ~`。
+ *
+ * 常用于输入需要 Shift 的符号（`!`、`@`、`#`…）。这类序列不是 Kitty 协议，
+ * `decodeKittyPrintable` 认不出来；早前版本把它当作"未知转义"整体丢弃，
+ * 用户手输 `!` 时字符消失，最后却提示"已保存并验证"。
+ */
+function decodeModifyOtherKeys(data: string): string | undefined {
+	const match = /^\u001b\[27;(\d+);(\d+)~$/u.exec(data);
+	if (match === null) return undefined;
+	const code = Number(match[2]);
+	if (!Number.isSafeInteger(code) || code < 0x21 || code > 0x7e) return undefined;
+	return String.fromCodePoint(code);
+}
+
 const PASTE_START = "\x1b[200~";
 const PASTE_END = "\x1b[201~";
 const INPUT_ERROR = "密钥须为非空、无空白的可打印字符，最多 4096 个字符。";
@@ -73,10 +88,12 @@ export class MaskedInput implements Component, Focusable {
 			} else if (matchesKey(data, "end") || matchesKey(data, "ctrl+e")) {
 				this.cursor = this.value.length;
 			} else {
-				const printable = decodeKittyPrintable(data);
-				// 未识别的终端转义序列不能被当作密钥，也不能渲染出来。
+				const printable = decodeKittyPrintable(data) ?? decodeModifyOtherKeys(data);
+				// 未识别的终端转义序列不能被当作密钥，也不能渲染出来；
+				// 但也不能静默丢弃——用户会以为字符已输入，最后保存成错误的密钥。
 				if (printable !== undefined) this.insert(printable);
-				else if (!data.includes("\x1b")) this.insert(data);
+				else if (data.includes("\x1b")) this.error = "无法识别该按键；请改用粘贴输入。";
+				else this.insert(data);
 			}
 		}
 		this.requestRender();

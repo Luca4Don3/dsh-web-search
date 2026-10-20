@@ -195,7 +195,7 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 	let persistenceReason: string | undefined;
 	const safePersistenceReasons = new Set([
 		"QUOTA_STATE_IO_UNAVAILABLE", "QUOTA_STATE_CORRUPT", "QUOTA_STATE_UNKNOWN_VERSION",
-		"QUOTA_STATE_LOCK_TIMEOUT", "QUOTA_STATE_LOCK_UNAVAILABLE",
+		"QUOTA_STATE_LOCK_TIMEOUT", "QUOTA_STATE_LOCK_UNAVAILABLE", "QUOTA_STATE_CAPACITY_EXCEEDED",
 	]);
 	const quotaEpochs = new Map<string, number>();
 	let flushTail: Promise<unknown> = Promise.resolve();
