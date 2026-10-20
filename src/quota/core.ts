@@ -456,6 +456,9 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 		if (ledger === undefined) {
 			ledger = { observedRemaining: cached.value.remaining, debited: 0, reservations: new Map() };
 			ledgers.set(scopeId, ledger);
+		} else {
+			// 余额缓存会被刷新：沿用旧快照会让后续预留按过期的余额放行。
+			ledger.observedRemaining = cached.value.remaining;
 		}
 		const reservedTotal = [...ledger.reservations.values()].reduce((total, reservation) => total + (reservation.dispatched ? 0 : reservation.cost), 0);
 		const available = Math.max(0, ledger.observedRemaining - ledger.debited - reservedTotal);
@@ -472,6 +475,11 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 				const freshBalance = balances.get(scopeId);
 				if (held.quotaEpoch !== (quotaEpochs.get(scopeId) ?? 0) || getCooldown(input.backend, "key", input.credential, input.cooldownOverrideMs) !== undefined || freshBalance === undefined ||
 					freshBalance.expiresAt <= clock() || freshBalance.value.state !== "known") return false;
+				// 派发前按**最新**余额复核：预留到派发之间缓存可能刷新成更小的值，
+				// 只看预留时的快照会让两次旧预留都派发成功，总成本超过实际余额。
+				const latestRemaining = freshBalance.value.remaining;
+				ledger!.observedRemaining = latestRemaining;
+				if (cost > Math.max(0, latestRemaining - ledger!.debited)) return false;
 				held.dispatched = true;
 				ledger!.debited = safeAdd(ledger!.debited, cost);
 				return true;

@@ -22,6 +22,7 @@ import { clampResults, createSearchEngine, renderOutcome, redactSecrets } from "
 import { getProviderMetadata, isProviderId, PROVIDER_IDS } from "../search/registry.js";
 import { readMaxResponseBytes } from "../shared/response-body.js";
 import { readSearchRequestConfig } from "../search/config.js";
+import { clipDiagnostic, MAX_FAILURE_SUMMARY_CHARS } from "../search/core.js";
 import { discardSpillFile, spillFullText } from "../search/spill-store.js";
 import type { SearchSource as WebSource } from "../search/contracts.js";
 
@@ -132,7 +133,10 @@ export interface WebSearchOptions {
 export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions = {}): void {
 	const store: SecretStore = options.credentialStore ?? createSecretStore();
 	const channelHealth = options.channelHealth;
-	const injectedTestBoundary = options.credentialStore !== undefined || options.channelHealth !== undefined;
+	// 任一依赖被注入都说明调用方自己掌管状态：此时不得产生宿主目录副作用。
+	const injectedTestBoundary = options.credentialStore !== undefined
+		|| options.channelHealth !== undefined
+		|| options.quotaManager !== undefined;
 	const quotaManager = options.quotaManager ?? createQuotaManager(injectedTestBoundary
 		? { ...(options.quotaClock === undefined ? {} : { clock: options.quotaClock }) }
 		: {
@@ -168,11 +172,14 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 			const requestConfig = readSearchRequestConfig();
 			const maxResponseBytes = readMaxResponseBytes();
 
+			// 整次调用只有一个绝对截止时间：凭据解析、搜索与收尾都从它倒扣。
+			// 各阶段分别计时会让总耗时翻倍（凭据用满一轮，引擎再拿满一轮）。
+			const deadline = Date.now() + requestConfig.totalTimeoutMs;
+			const remainingMs = (): number => Math.max(1, deadline - Date.now());
+
 			// 未授权计费时绝不读取密钥环境变量或系统密钥库。
-			// 凭据读取必须在整次调用的总预算之内：系统密钥库可能极慢，
-			// 不能解析完成之后才重新计时，否则配置的预算形同虚设。
 			const keys = routing.allowBillable
-				? await withinDeadline(resolvePlanKeys(provider, store, signal), requestConfig.totalTimeoutMs, signal)
+				? await withinDeadline(resolvePlanKeys(provider, store, signal), remainingMs(), signal)
 				: emptyPlanKeys();
 			if (isAborted(signal)) throw createAbortError();
 			const secrets = BACKENDS.map((backend) => keys[backend]);
@@ -192,8 +199,9 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 				quotaManager,
 				allowBillable: routing.allowBillable,
 				strategy: routing.strategy,
-				timeoutMs: requestConfig.timeoutMs,
-				totalTimeoutMs: requestConfig.totalTimeoutMs,
+				timeoutMs: Math.min(requestConfig.timeoutMs, remainingMs()),
+				// 只把剩下的时间交给引擎，不再从零起算。
+				totalTimeoutMs: remainingMs(),
 				maxResponseBytes,
 				retries: requestConfig.retries,
 				// 只有真正走磁盘持久化时才创建宿主目录：
@@ -245,8 +253,12 @@ export default function piWebSearch(pi: ExtensionAPI, options: WebSearchOptions 
 				})).slice(0, numResults);
 				const text = redactSecrets(outcome.text, secrets);
 				const truncated = text.length > MAX_TEXT_CHARS;
+				// 汇总同样限长：单条已裁剪，多条累加仍可能撑大会话。
 				const fallbackReason = outcome.failures.length > 0
-					? outcome.failures.map((failure) => `${failure.label}[${failure.kind}]: ${failure.message}`).join(" | ")
+					? clipDiagnostic(
+						outcome.failures.map((failure) => `${failure.label}[${failure.kind}]: ${failure.message}`).join(" | "),
+						MAX_FAILURE_SUMMARY_CHARS,
+					)
 					: undefined;
 				return {
 					content: [{ type: "text" as const, text: renderOutcome(safeQuery, { backend: outcome.backend, text, sources }, MAX_TEXT_CHARS, outcome.spillPath) }],

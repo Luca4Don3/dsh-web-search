@@ -11,6 +11,7 @@
  *
  * @module pi-web-search-auth
  */
+import { redactSecrets } from "../shared/redact.js";
 import { type SecretBackend, type SecretStore } from "./credentials.js";
 /** 后端标识（与存储层共用）。 */
 export type Backend = SecretBackend;
@@ -54,10 +55,12 @@ export declare function resolvePlanKeys(provider: "auto" | Backend, store: Secre
 export declare function probeBackendStatus(backend: Backend, store: SecretStore): Promise<BackendStatus>;
 /**
  * 把可能混入的来源文本中的 key 抹掉。
- * 同时覆盖原文与 URL 编码形式（如 `a+b/c` 与 `a%2Bb%2Fc`），
- * 确保 HTTP / MCP / 网络错误与 fallbackReason 都不会泄露凭据。
+ *
+ * 实现已统一到 {@link ../shared/redact.js}：认证层与搜索内核共用同一份编码形态覆盖
+ * （原文、JSON 转义、网址组件编码、标准表单编码、base64 及大小写混用）。
+ * 这里只做转出，保持既有调用点不变。
  */
-export declare function redactSecrets(text: string, secrets: readonly (string | undefined)[]): string;
+export { redactSecrets };
 /** 单行诊断文本的长度上限。 */
 export declare const MAX_DIAGNOSTIC_CHARS = 300;
 /** 先脱敏、再截断，避免截断把 key 的片段留在文本里。 */

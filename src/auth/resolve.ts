@@ -12,6 +12,7 @@
  * @module pi-web-search-auth
  */
 
+import { redactSecrets } from "../shared/redact.js";
 import {
 	SECRET_SERVICE_PREFIX,
 	SECRET_TOOL_SERVICE,
@@ -178,44 +179,12 @@ export async function probeBackendStatus(backend: Backend, store: SecretStore): 
 
 /**
  * 把可能混入的来源文本中的 key 抹掉。
- * 同时覆盖原文与 URL 编码形式（如 `a+b/c` 与 `a%2Bb%2Fc`），
- * 确保 HTTP / MCP / 网络错误与 fallbackReason 都不会泄露凭据。
+ *
+ * 实现已统一到 {@link ../shared/redact.js}：认证层与搜索内核共用同一份编码形态覆盖
+ * （原文、JSON 转义、网址组件编码、标准表单编码、base64 及大小写混用）。
+ * 这里只做转出，保持既有调用点不变。
  */
-export function redactSecrets(text: string, secrets: readonly (string | undefined)[]): string {
-	let safe = text;
-	for (const secret of secrets) {
-		if (secret === undefined || secret.length === 0) continue;
-		safe = safe.split(secret).join("***");
-		const encodedForms = new Set([
-			encodeURIComponent(secret),
-			new URLSearchParams({ key: secret }).toString().slice("key=".length),
-			encodeURIComponent(encodeURIComponent(secret)),
-		]);
-		for (const encoded of encodedForms) {
-			if (encoded.length === 0 || encoded === secret) continue;
-			// URL 百分号转义的十六进制字母大小写不敏感，但 key 中原始字母大小写仍敏感。
-			const regexSpecials = new Set([".", "*", "+", "?", "^", "$", "{", "}", "(", ")", "|", "[", "]", "\\"]);
-			let pattern = "";
-			for (let index = 0; index < encoded.length; index++) {
-				const character = encoded[index]!;
-				const hex = encoded.slice(index + 1, index + 3);
-				if (character === "%" && /^[0-9a-f]{2}$/iu.test(hex)) {
-					pattern += "%";
-					for (const digit of hex) {
-						const lower = digit.toLowerCase();
-						const upper = digit.toUpperCase();
-						pattern += lower === upper ? digit : `[${upper}${lower}]`;
-					}
-					index += 2;
-				} else {
-					pattern += regexSpecials.has(character) ? `\\${character}` : character;
-				}
-			}
-			safe = safe.replace(new RegExp(pattern, "gu"), "***");
-		}
-	}
-	return safe;
-}
+export { redactSecrets };
 
 /** 单行诊断文本的长度上限。 */
 export const MAX_DIAGNOSTIC_CHARS = 300;

@@ -21,5 +21,16 @@ export declare function httpKind(status: number, detail: string): SearchErrorKin
  * 那会把凭据带进搜索结果。
  */
 export declare function isHttpUrl(value: string): boolean;
+/** 单条诊断文本的上限：足够定位问题，又不会把会话或错误结果撑大。 */
+export declare const MAX_DIAGNOSTIC_CHARS = 300;
+/** 多条失败汇总的上限。 */
+export declare const MAX_FAILURE_SUMMARY_CHARS = 1024;
+/**
+ * 裁剪诊断文本。
+ *
+ * 只负责长度，不做脱敏：调用方必须**先**完整脱敏再调用这里。
+ * 反过来先截断会让密钥在中间被切断，留下无法再被匹配的凭据片段。
+ */
+export declare function clipDiagnostic(text: string, max?: number): string;
 /** 提取各服务的错误文本；调用方必须在输出前脱敏。 */
 export declare function errorDetailFrom(payload: unknown): string | undefined;

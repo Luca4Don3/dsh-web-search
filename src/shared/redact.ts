@@ -1,12 +1,12 @@
 /**
  * 密钥脱敏：唯一实现。
  *
- * 上游可能以多种形式回显密钥（原文、JSON 转义、URL 编码、base64），
- * 只按原文替换会漏掉编码形式。搜索内核与 Pi 适配层都必须走这里，
- * 否则不同宿主对同一份响应会得到不同的遮蔽结果。
+ * 上游可能以多种形式回显密钥（原文、JSON 转义、网址组件编码、标准表单编码、
+ * base64），只按原文替换会漏掉编码形式。搜索内核、Pi 适配层与认证层都必须走这里，
+ * 否则同一份响应在不同宿主会得到不同的遮蔽结果。
  */
 
-/** 百分号转义的正则片段：`%2b`、`%2B`、`%2b` 混用都要命中。 */
+/** 正则元字符：逐个转义，避免密钥里的符号被当成模式。 */
 const REGEX_SPECIALS = /[.*+?^${}()|[\]\\]/gu;
 
 /**
@@ -36,15 +36,32 @@ function encodedPattern(encoded: string): string {
 	return pattern;
 }
 
+/** 标准表单编码（`application/x-www-form-urlencoded`）。 */
+function formEncode(value: string): string {
+	return new URLSearchParams({ v: value }).toString().slice(2);
+}
+
 /** 单个密钥需要遮蔽的全部编码形态，按长度降序以便先替换长串。 */
 export function secretVariants(secret: string): string[] {
 	if (secret.length === 0) return [];
 	const values = new Set<string>([secret]);
 	values.add(JSON.stringify(secret).slice(1, -1));
-	const encoded = encodeURIComponent(secret);
-	values.add(encoded);
-	values.add(encodeURIComponent(encoded));
-	values.add(encoded.replace(/%[0-9A-F]{2}/gu, (part) => part.toLowerCase()));
+
+	const uriEncoded = encodeURIComponent(secret);
+	values.add(uriEncoded);
+	values.add(encodeURIComponent(uriEncoded));
+	values.add(uriEncoded.replace(/%[0-9A-F]{2}/gu, (part) => part.toLowerCase()));
+
+	// 表单编码与网址组件编码并不等价：空格是 `+` 而非 `%20`，波浪号被转义为 `%7E`。
+	// 认证层历史上已覆盖这一形态，共享化时不能丢掉。
+	const formEncoded = formEncode(secret);
+	if (formEncoded !== secret) values.add(formEncoded);
+	values.add(formEncode(formEncoded));
+	values.add(formEncoded.replace(/%[0-9A-F]{2}/gu, (part) => part.toLowerCase()));
+	// 空格的两种写法可以互换，交叉形态也要承认。
+	if (formEncoded.includes("+")) values.add(formEncoded.replace(/\+/gu, "%20"));
+	if (uriEncoded.includes("%20")) values.add(uriEncoded.replace(/%20/gu, "+"));
+
 	values.add(Buffer.from(secret, "utf8").toString("base64"));
 	values.add(Buffer.from(secret, "utf8").toString("base64url"));
 	return [...values].filter((value) => value.length > 0).sort((left, right) => right.length - left.length);
@@ -60,21 +77,7 @@ export function expandSecrets(secrets: readonly (string | undefined)[]): string[
 	return [...values].sort((left, right) => right.length - left.length);
 }
 
-/** 每个密钥可匹配的正则集合：字面量形态 + 十六进制大小写不敏感的编码形态。 */
-function secretMatchers(secret: string): RegExp[] {
-	const matchers: RegExp[] = [];
-	const seen = new Set<string>();
-	for (const variant of secretVariants(secret)) {
-		for (const source of [variant, encodedPattern(variant)]) {
-			if (source.length === 0 || seen.has(source)) continue;
-			seen.add(source);
-			// 不含百分号转义的形态用字面量更快，但仍按同一顺序替换。
-			matchers.push(source === variant ? new RegExp(matchLiteral(variant), "gu") : new RegExp(source, "gu"));
-		}
-	}
-	return matchers.sort((left, right) => right.source.length - left.source.length);
-}
-
+/** 字面量形态的正则源：仅转义元字符。 */
 function matchLiteral(value: string): string {
 	let pattern = "";
 	for (const character of value) {
@@ -84,17 +87,34 @@ function matchLiteral(value: string): string {
 	return pattern;
 }
 
+/** 每个密钥可匹配的正则集合：字面量形态 + 十六进制大小写不敏感的编码形态。 */
+function secretMatchers(secret: string): RegExp[] {
+	const matchers: RegExp[] = [];
+	const seen = new Set<string>();
+	for (const variant of secretVariants(secret)) {
+		for (const source of [matchLiteral(variant), encodedPattern(variant)]) {
+			if (source.length === 0 || seen.has(source)) continue;
+			seen.add(source);
+			matchers.push(new RegExp(source, "gu"));
+		}
+	}
+	return matchers;
+}
+
 /**
  * 替换全部命中项。
  *
- * 接受原始密钥：字面量与编码形态都在这里展开。百分号转义的十六进制
- * 字母大小写不敏感（`%2b` 与 `%2B` 等价），其余字符保持大小写敏感。
+ * 百分号转义的十六进制字母大小写不敏感（`%2b` 与 `%2B` 等价），
+ * 其余字符保持大小写敏感。用平直的正则逐个替换，不做跨形态的贪婪匹配。
  */
 export function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string {
 	let safe = value;
 	for (const secret of secrets) {
 		if (secret === undefined || secret.length === 0) continue;
-		for (const matcher of secretMatchers(secret)) safe = safe.replace(matcher, "***");
+		for (const matcher of secretMatchers(secret)) {
+			matcher.lastIndex = 0;
+			safe = safe.replace(matcher, "***");
+		}
 	}
 	return safe;
 }
