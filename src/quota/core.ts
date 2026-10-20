@@ -213,7 +213,12 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 	 * 落后于别的实例已写入的事件，事件发生时无法知道磁盘上的最高值。
 	 * 保存前会先读一次磁盘最高序号，再为这批新事件逐个递增。
 	 */
-	const pendingEvents = new Set<string>();
+	// 用计数而不是集合：同一个键在写盘期间可能再次产生事件，
+	// 保存成功时只能扣减本次快照里的那份，否则会把新事件一并清掉。
+	const pendingEvents = new Map<string, number>();
+	const noteEvent = (key: string): void => {
+		pendingEvents.set(key, (pendingEvents.get(key) ?? 0) + 1);
+	};
 
 	const initialize = (): Promise<void> => {
 		if (initialized !== undefined) return initialized;
@@ -301,7 +306,7 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 			updatedAt: now,
 		};
 		records.set(key, entry);
-		pendingEvents.add(key);
+		noteEvent(key);
 		if (reason === "quota_exhausted") {
 			quotaEpochs.set(scopeId, (quotaEpochs.get(scopeId) ?? 0) + 1);
 			balances.delete(scopeId);
@@ -369,7 +374,7 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 				cleared: true,
 			});
 			// 清除也是一次新事件：必须拿到递增序号，否则回拨后的清除会被旧失败压过。
-			pendingEvents.add(key);
+			noteEvent(key);
 		}
 	};
 
@@ -557,7 +562,9 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 			} catch {
 				// 读不到磁盘就退回本地计数：宁可保守，也不阻断保存。
 			}
-			for (const key of pendingEvents) {
+			// 记下本次要落盘的待办计数：保存期间可能出现新事件，不能一并清空。
+			const snapshot = new Map(pendingEvents);
+			for (const key of snapshot.keys()) {
 				const record = records.get(key);
 				if (record === undefined) continue;
 				const diskRecord = diskByKey.get(key);
@@ -590,8 +597,13 @@ export function createQuotaManager(options: QuotaManagerOptions = {}) {
 				persistence = "persistent";
 				persistenceReason = undefined;
 				// 保存成功后才提交序号基线并清理待办，失败时下次会重新分配更大的序号。
+				// 只扣减本次快照里的计数：写盘期间新增的事件必须留到下一次保存。
 				eventSequence = base;
-				pendingEvents.clear();
+				for (const [key, count] of snapshot) {
+					const left = (pendingEvents.get(key) ?? 0) - count;
+					if (left <= 0) pendingEvents.delete(key);
+					else pendingEvents.set(key, left);
+				}
 				return { status: "persisted" as const };
 			} catch {
 				persistence = "degraded";

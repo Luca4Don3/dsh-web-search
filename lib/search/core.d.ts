@@ -18,7 +18,7 @@ export declare function httpKind(status: number, detail: string): SearchErrorKin
  * 只接受不含内嵌凭据的可点击网页链接。
  *
  * 脚本、本地文件与内联数据不是可引用的来源；带内嵌凭据的地址
- * （`https://<user>:<password>@host`）也不行，那会把凭据带进搜索结果。
+ * （用户信息段不是空的那种）也不行，那会把凭据带进搜索结果。
  */
 export declare function isHttpUrl(value: string): boolean;
 /** 单条诊断文本的上限：足够定位问题，又不会把会话或错误结果撑大。 */

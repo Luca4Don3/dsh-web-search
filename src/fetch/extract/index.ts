@@ -68,29 +68,57 @@ function tagEnd(html: string, from: number): number {
 	return -1;
 }
 
-/** 从左至右找下一个指定标签；遇到未结束的标签时停止，避免反复回扫坏 HTML。 */
+/**
+ * 从左至右找下一个指定标签；遇到未结束的标签时停止，避免反复回扫坏 HTML。
+ *
+ * 扫描时跟踪"是否位于某个标签的属性值里"：属性值中的 `<main>` 只是字面量，
+ * 不能当成真实结构，否则 `data-example="<main>…"` 就能劫持正文选择。
+ * 每个字符只前进一次，因此整体仍与输入长度成线性。
+ */
 function findTagToken(html: string, tag: string, from: number): TagToken | undefined {
+	const wanted = tag.toLowerCase();
 	let cursor = from;
-	while (true) {
-		const start = html.indexOf("<", cursor);
-		if (start < 0) return undefined;
-		const closing = html[start + 1] === "/";
-		const nameStart = start + (closing ? 2 : 1);
-		const nameEnd = nameStart + tag.length;
-		if (html.slice(nameStart, nameEnd).toLowerCase() !== tag.toLowerCase()) {
-			cursor = start + 1;
+	let quote = "";
+	let inTag = false;
+	// 从 `from` 开始时一定位于标签之外：调用方传的都是上一个标签的 end。
+	while (cursor < html.length) {
+		const character = html[cursor]!;
+		if (quote !== "") {
+			if (character === quote) quote = "";
+			cursor++;
 			continue;
 		}
-		const boundary = html[nameEnd];
-		if (boundary !== undefined && boundary !== " " && boundary !== "\t" && boundary !== "\n" && boundary !== "\r" && boundary !== "\f" && boundary !== "/" && boundary !== ">") {
-			cursor = start + 1;
+		if (character === ">") {
+			inTag = false;
+			cursor++;
 			continue;
 		}
-		const end = tagEnd(html, nameEnd);
-		if (end < 0) return undefined;
-		const attributes = closing ? "" : html.slice(nameEnd, end - 1);
-		return { start, end, closing, selfClosing: !closing && attributes.trimEnd().endsWith("/"), attributes };
+		if (character === "<") {
+			// 只有标签之外的小于号才可能是结构起点。
+			const closing = html[cursor + 1] === "/";
+			const nameStart = cursor + (closing ? 2 : 1);
+			const nameEnd = nameStart + wanted.length;
+			const isTarget = html.slice(nameStart, nameEnd).toLowerCase() === wanted;
+			const boundary = html[nameEnd];
+			const boundaryOk = boundary === undefined || boundary === " " || boundary === "\t" || boundary === "\n" || boundary === "\r" || boundary === "\f" || boundary === "/" || boundary === ">";
+			if (isTarget && boundaryOk) {
+				const end = tagEnd(html, nameEnd);
+				if (end < 0) return undefined;
+				const attributes = closing ? "" : html.slice(nameEnd, end - 1);
+				return { start: cursor, end, closing, selfClosing: !closing && attributes.trimEnd().endsWith("/"), attributes };
+			}
+			inTag = true;
+			cursor++;
+			continue;
+		}
+		if (inTag && (character === '"' || character === "'")) {
+			quote = character;
+			cursor++;
+			continue;
+		}
+		cursor++;
 	}
+	return undefined;
 }
 
 function findClosingTag(html: string, tag: string, from: number): TagToken | undefined {
@@ -138,30 +166,63 @@ function findElementRange(html: string, tag: string, from = 0, accept?: (attribu
  * 因此代价与输入长度成线性。早前版本对每个未闭合标签都调用一次找闭合标签，
  * 攻击者控制的网页可以借此让同步解析阻塞数秒。
  */
+interface OpenHeader {
+	readonly start: number;
+	readonly contentStart: number;
+	article: boolean;
+	nav: boolean;
+	links: number;
+	textChars: number;
+}
+
 function stripSiteHeaders(html: string): string {
 	const ranges: Array<{ start: number; end: number }> = [];
-	const open: Array<{ start: number; contentStart: number }> = [];
-	for (let token = findTagToken(html, "header", 0); token !== undefined; token = findTagToken(html, "header", token.end)) {
+	const open: OpenHeader[] = [];
+	let cursor = 0;
+	while (cursor < html.length) {
+		const token = findTagToken(html, "header", cursor);
+		const segmentEnd = token === undefined ? html.length : token.start;
+		// 把两个 header 标签之间的内容记到**最内层** header 上。
+		// 每个字符因此只被扫描一次：嵌套越深也不会重复统计外层子树。
+		if (open.length > 0 && segmentEnd > cursor) {
+			const segment = html.slice(cursor, segmentEnd);
+			const top = open[open.length - 1]!;
+			if (!top.article && /<h[1-3]\b/iu.test(segment)) top.article = true;
+			if (!top.nav && /<nav\b/iu.test(segment)) top.nav = true;
+			top.links += (segment.match(/<a\b/giu) ?? []).length;
+			top.textChars += segment.replace(/<[^>]*>/gu, "").trim().length;
+		}
+		if (token === undefined) break;
+		cursor = token.end;
 		if (token.selfClosing) continue;
 		if (!token.closing) {
-			open.push({ start: token.start, contentStart: token.end });
+			open.push({ start: token.start, contentStart: token.end, article: false, nav: false, links: 0, textChars: 0 });
 			continue;
 		}
-		const start = open.pop();
-		if (start === undefined) continue;
-		const inner = html.slice(start.contentStart, token.start);
+		const popped = open.pop();
+		if (popped === undefined) continue;
 		// 带文章级标题的 header 属于正文结构，任何情况下都保留。
-		if (/<h[1-3]\b/iu.test(inner)) continue;
-		const links = (inner.match(/<a\b/giu) ?? []).length;
-		if (/<nav\b/iu.test(inner) || links >= 3) {
-			const text = inner.replace(/<[^>]*>/gu, "").trim();
-			if (/<nav\b/iu.test(inner) || (links >= 3 && text.length < 200)) ranges.push({ start: start.start, end: token.end });
-		}
+		if (popped.article) continue;
+		if (popped.nav || (popped.links >= 3 && popped.textChars < 200)) ranges.push({ start: popped.start, end: token.end });
 	}
 	if (ranges.length === 0) return html;
-	let result = html;
-	for (const range of ranges.reverse()) result = result.slice(0, range.start) + result.slice(range.end);
-	return result;
+	// 嵌套 header 会产生互相包含的范围：先按升序合并，再一次性拼接保留区间。
+	// 直接按闭合顺序倒序删除会因为坐标失效而删到后面的正常正文。
+	ranges.sort((left, right) => left.start - right.start);
+	const merged: Array<{ start: number; end: number }> = [];
+	for (const range of ranges) {
+		const last = merged[merged.length - 1];
+		if (last !== undefined && range.start <= last.end) last.end = Math.max(last.end, range.end);
+		else merged.push({ ...range });
+	}
+	const parts: string[] = [];
+	let kept = 0;
+	for (const range of merged) {
+		parts.push(html.slice(kept, range.start));
+		kept = range.end;
+	}
+	parts.push(html.slice(kept));
+	return parts.join("");
 }
 
 function removeElements(html: string, tags: readonly string[]): string {

@@ -48,6 +48,9 @@ export interface QuotaStateStore {
 const BACKENDS = new Set<QuotaBackend>(["exa", "parallel", "tavily", "firecrawl", "serpapi", "tinyfish"]);
 const REASONS = new Set<QuotaFailureReason>(["rate_limited", "quota_exhausted"]);
 const MAX_ENTRIES = 512;
+
+/** 冷却结束超过这个时长就不再保留：与额度管理器的历史保留期一致。 */
+const EXPIRED_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const MAX_STATE_FILES = MAX_ENTRIES;
 const MAX_STATE_BYTES = 64 * 1024;
 const MAX_ENTRY_BYTES = 4096;
@@ -135,6 +138,15 @@ function conservativeMerge(current: PersistedQuotaEntry | undefined, incoming: P
 		updatedAt: Math.max(current.updatedAt, incoming.updatedAt),
 		sequence: Math.max(current.sequence ?? 0, incoming.sequence ?? 0),
 	};
+}
+
+/** 尽力删除单个状态文件；不存在或删除失败都不影响保存本身。 */
+async function removeFile(path: string): Promise<void> {
+	try {
+		await unlink(path);
+	} catch {
+		// 文件可能已被别的实例回收：忽略即可，保存继续。
+	}
 }
 
 async function ensureDirectory(directory: string): Promise<void> {
@@ -354,6 +366,8 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 				blocked = { status: "unavailable", reason: SAFE_LOCK_TIMEOUT };
 				return blocked;
 			}
+			// 读取已经成功：清掉之前记录的瞬时失败，避免一次锁竞争让实例永久退化。
+			blocked = undefined;
 			let saltState: PersistedQuotaState | "missing" | "corrupt" | "unknown_version";
 			try {
 				saltState = await readSalt();
@@ -433,8 +447,31 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 			if (JSON.stringify(previous) !== JSON.stringify(merged)) updates.push(merged);
 			mergedEntries.set(key, merged);
 		}
+		// 容量按"仍然有效"的条目计算，并顺手回收早已过期的文件。
+		// 否则轮换凭据后残留的旧作用域会永久占满配额，新冷却再也写不进去。
+		//
+		// 时间基准取**本次提交里的最大 updatedAt**，而不是墙钟 `Date.now()`：
+		// 额度管理器用的是注入时钟（测试里可以是很小的逻辑时间），
+		// 用墙钟判断会把仍然有效的记录误判成过期并删除。
+		const referenceNow = checked.entries.reduce((max, entry) => Math.max(max, entry.updatedAt), 0);
+		const reclaimed: string[] = [];
+		if (referenceNow > 0) {
+			const retentionCutoff = referenceNow - EXPIRED_RETENTION_MS;
+			for (const [key, entry] of mergedEntries) {
+				if (entry.until >= retentionCutoff) continue;
+				mergedEntries.delete(key);
+				reclaimed.push(key);
+			}
+		}
 		if (mergedEntries.size > MAX_ENTRIES) return { status: "unavailable", reason: SAFE_CORRUPT };
+		for (const key of reclaimed) {
+			const [scopeId, reason] = key.split(":");
+			if (scopeId === undefined || reason === undefined) continue;
+			await removeFile(join(base, entryFileName({ scopeId, reason: reason as QuotaFailureReason })));
+		}
 		for (const entry of updates) {
+			// 已被回收的过期条目不再写回。
+			if (!mergedEntries.has(entryKey(entry))) continue;
 			await atomicWrite(join(base, entryFileName(entry)), JSON.stringify({ version: 1, entry }));
 		}
 		return { status: "saved" };

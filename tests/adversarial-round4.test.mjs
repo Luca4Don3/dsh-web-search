@@ -5,7 +5,7 @@
  * 以及两处正文提取边界；并补齐此前缺失的 T01／T02／V01 回归。
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -279,4 +279,36 @@ test("跨实例写入时失败阶数接着磁盘推进", async () => {
   await second.flush();
   const entry = fixture.entries()[0];
   assert.equal(entry.failureCount, 3, "三次失败后阶数应为 3");
+});
+
+test("迁移后备份必须移出 extensions 目录才停用", async (context) => {
+  const loaderUrl = new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js", import.meta.url);
+  let discover;
+  try {
+    ({ discoverAndLoadExtensions: discover } = await import(loaderUrl.href));
+  } catch {
+    context.skip("当前环境没有 Pi 运行时");
+    return;
+  }
+  const root = mkdtempSync(join(ROOT, "migration-"));
+  const agent = join(root, "agent");
+  const project = join(root, "project");
+  const entry = 'export default function(pi) { pi.registerTool({ name: "web_search", label: "S", description: "S", parameters: { type: "object", properties: {} }, async execute() { return { content: [] }; } }); }';
+  mkdirSync(join(agent, "extensions"), { recursive: true, mode: 0o700 });
+  mkdirSync(project, { recursive: true, mode: 0o700 });
+
+  // 仍在 extensions/ 之下：会被继续加载，重名冲突没有解除。
+  const inside = join(agent, "extensions", "web-search.bak");
+  mkdirSync(inside, { recursive: true, mode: 0o700 });
+  writeFileSync(join(inside, "index.ts"), entry);
+  const loadedInside = await discover([], project, agent);
+  assert.ok(loadedInside.extensions.flatMap((item) => [...item.tools.keys()]).includes("web_search"));
+
+  // 移到同级目录：才真正停用。
+  const outside = join(agent, "web-search.bak");
+  mkdirSync(outside, { recursive: true, mode: 0o700 });
+  writeFileSync(join(outside, "index.ts"), entry);
+  rmSync(inside, { recursive: true, force: true });
+  const loadedOutside = await discover([], project, agent);
+  assert.deepEqual(loadedOutside.extensions.flatMap((item) => [...item.tools.keys()]), []);
 });

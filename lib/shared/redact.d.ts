@@ -9,10 +9,4 @@
 export declare function secretVariants(secret: string): string[];
 /** 把一组密钥展开成全部需要遮蔽的形态。 */
 export declare function expandSecrets(secrets: readonly (string | undefined)[]): string[];
-/**
- * 替换全部命中项。
- *
- * 百分号转义的十六进制字母大小写不敏感（`%2b` 与 `%2B` 等价），
- * 其余字符保持大小写敏感。用平直的正则逐个替换，不做跨形态的贪婪匹配。
- */
 export declare function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string;

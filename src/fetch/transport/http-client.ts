@@ -41,7 +41,7 @@ export function buildHeaders(url: URL): Record<string, string> {
 		"accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
 		"accept-encoding": "gzip, deflate, br",
 		// 与搜索内核共用一个标识：合并后不应再对外宣称旧包名与旧版本。
-		"user-agent": "dsh-web-search/0.2.2",
+		"user-agent": "dsh-web-search/0.2.3",
 		host: url.host,
 	};
 }

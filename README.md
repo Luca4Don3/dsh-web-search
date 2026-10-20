@@ -63,7 +63,9 @@ pi install <server_path>/dsh-web-search
 ls ~/.pi/agent/extensions/web-search
 
 # 2. 移走旧版（保留备份便于回滚；不要直接删除）
-mv ~/.pi/agent/extensions/web-search ~/.pi/agent/extensions/web-search.bak
+#    必须移出 ~/.pi/agent/extensions/ —— Pi 会加载该目录下的每个子目录，
+#    改名成 web-search.bak 仍在自动发现范围内，重名冲突不会解除。
+mv ~/.pi/agent/extensions/web-search ~/.pi/agent/web-search.bak
 
 # 3. 安装新版
 pi install <server_path>/dsh-web-search
@@ -74,7 +76,13 @@ pi install <server_path>/dsh-web-search
 若此前用 `pi install` 装过旧版，改用 `pi remove ~/pi-extensions/extensions/web-search` 卸载。
 `/web-search-auth` 命令名保持不变，密钥配置与冷却状态无需迁移。
 
-回滚：`mv ~/.pi/agent/extensions/web-search.bak ~/.pi/agent/extensions/web-search`。
+回滚：`mv ~/.pi/agent/web-search.bak ~/.pi/agent/extensions/web-search`。
+
+备份目录只要仍在 `~/.pi/agent/extensions/` 之下就会被继续加载；
+放到该目录的**同级**位置（如 `~/.pi/agent/`）才能真正停用。
+
+如果此前已按旧版说明放在 `~/.pi/agent/extensions/web-search.bak`，
+请补一步：`mv ~/.pi/agent/extensions/web-search.bak ~/.pi/agent/web-search.bak`。
 
 安装后可用 `/web-search-auth` 管理密钥。环境变量优先于系统密钥库。
 

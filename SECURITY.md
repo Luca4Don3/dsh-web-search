@@ -32,8 +32,8 @@
 | 4 | SENSITIVE_CONFIG_ASSIGNMENT | lib/quota/usage.d.ts:15 | 同上（编译产物） | 误报：与 #2 同源 |
 | 5 | CREDENTIAL_URL | src/search/core.ts:49 | 关键词表 `invalid api key` / `api key` | 误报：错误分类关键词，非 URL |
 | 6 | CREDENTIAL_URL | lib/search/core.js:43 | 同上（编译产物） | 误报：与 #5 同源 |
-| 7 | CREDENTIAL_URL | lib/search/core.d.ts:20 | 注释 `https://<user>:<password>@host` | 误报：占位符形式的说明文字 |
-| 8 | CREDENTIAL_URL | tests/fetch/url-policy.test.mjs:62 | `https://user:pass@example.com/` | 误报：故意构造的拒收用例输入，域名为 example.com |
+| 7 | CREDENTIAL_URL | lib/search/core.d.ts:20 | 注释里的"带内嵌凭据地址"占位符写法 | 误报：占位符形式的说明文字 |
+| 8 | CREDENTIAL_URL | tests/fetch/url-policy.test.mjs:62 | 测试用例中的内嵌凭据地址，域名为 example.com | 误报：故意构造的拒收用例输入 |
 | 9 | SENSITIVE_CONFIG_ASSIGNMENT | tests/pi/auth.test.mjs:629 | `EXA_API_KEY: undefined` | 误报：清空环境变量 |
 | 10 | SENSITIVE_CONFIG_ASSIGNMENT | tests/pi/backends.test.mjs:154 | `api_key: TAVILY_KEY` | 误报：引用测试常量，值为虚构 |
 | 11 | SENSITIVE_CONFIG_ASSIGNMENT | tests/pi/mock.test.mjs:46 | `credentialStore: …` | 误报：注入替身的字段名 |
@@ -55,6 +55,15 @@
 | `NON_IGNORED_RUNTIME_CONFIG` | 6 | 环境变量读取（`process.env.PI_WEB_SEARCH_*`） | 误报：读取不是泄露 |
 | `CREDENTIAL_URL` | 5 | 见上表 #5–#8 | 误报 |
 | `HIGH_ENTROPY_ASSIGNMENT` | 4 | npm `integrity` 的 sha512、测试盐文件 | 误报：哈希与随机盐 |
+
+## 第六次扫描（v0.2.3 前）
+
+本次扫描共 18 项阻断、439 项待审。相对上一轮新增的阻断来自
+`SECURITY.md` 自身：本文为了说明裁定对象，引用了被判定位置的原文，
+其中"带内嵌凭据地址"的写法又触发同一条规则。已改为描述性表述，
+不再逐字复制触发模式。
+
+其余命中与上文分类一致，未发现新的真实凭据。
 
 ## 已知遗留
 

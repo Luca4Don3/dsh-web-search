@@ -123,7 +123,7 @@ const DEFAULT_NUM_RESULTS = 8;
 const MAX_TEXT_CHARS = 24_000;
 const RETRY_BASE_MS = 400;
 const RETRY_MAX_WAIT_MS = 5_000;
-const USER_AGENT = "dsh-web-search/0.2.2";
+const USER_AGENT = "dsh-web-search/0.2.3";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
@@ -460,6 +460,9 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 				reservation = result.reservation;
 			}
 			checkAborted(signal);
+			// 紧邻发请求前再核对一次预算：额度预检是同步运算，事件循环被占住时
+			// 超时定时器还没机会执行，只看 timedOut 会放过已经超时的调用。
+			if (budget.exhausted) throw new BudgetExhaustedError();
 			const spec = buildSpec(step, request.query, request.maxResults);
 			if (reservation !== undefined && !reservation.dispatch()) throw new BackendError("额度预留已失效，未发送搜索请求", "quota_preflight");
 			dispatched = true;

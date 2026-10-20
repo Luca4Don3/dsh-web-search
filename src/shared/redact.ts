@@ -107,6 +107,39 @@ function secretMatchers(secret: string): RegExp[] {
  * 百分号转义的十六进制字母大小写不敏感（`%2b` 与 `%2B` 等价），
  * 其余字符保持大小写敏感。用平直的正则逐个替换，不做跨形态的贪婪匹配。
  */
+/** 十六进制位的大小写不敏感形式：`B` 写作 `[Bb]`，数字原样。 */
+function hexPair(byte: number): string {
+	const hex = byte.toString(16).toUpperCase().padStart(2, "0");
+	let pattern = "";
+	for (const digit of hex) pattern += digit >= "A" ? `[${digit}${digit.toLowerCase()}]` : digit;
+	return pattern;
+}
+
+/**
+ * 任意"部分百分号编码"形态的正则。
+ *
+ * `encodeURIComponent` 只产出一种标准写法，但上游可以合法地把任意一个字符
+ * 单独转义（`F` → `%46`），一次标准解码就还原出完整密钥。
+ * 这里把每个字符展开成"原形或它的转义"，覆盖任意组合。
+ *
+ * 只对含 `%` 的文本启用，并限定密钥长度，避免在长文本上引入可观的匹配开销。
+ */
+function flexibleEncodedPattern(secret: string): string {
+	let pattern = "";
+	for (const character of secret) {
+		const code = character.codePointAt(0);
+		if (code === undefined || code > 0x7f) {
+			pattern += REGEX_SPECIALS.test(character) ? `\\${character}` : character;
+			REGEX_SPECIALS.lastIndex = 0;
+			continue;
+		}
+		const literal = REGEX_SPECIALS.test(character) ? `\\${character}` : character;
+		REGEX_SPECIALS.lastIndex = 0;
+		pattern += `(?:${literal}|%${hexPair(code)})`;
+	}
+	return pattern;
+}
+
 export function redactSecrets(value: string, secrets: readonly (string | undefined)[]): string {
 	const matchers: RegExp[] = [];
 	for (const secret of secrets) {
@@ -120,6 +153,13 @@ export function redactSecrets(value: string, secrets: readonly (string | undefin
 	for (const matcher of matchers) {
 		matcher.lastIndex = 0;
 		safe = safe.replace(matcher, "***");
+	}
+	// 标准写法之外，再覆盖"任意字符被单独转义"的等价表示。
+	// 没有百分号的文本不需要走这条较重的路径。
+	if (!value.includes("%")) return safe;
+	for (const secret of secrets) {
+		if (secret === undefined || secret.length < 4 || secret.length > 128) continue;
+		safe = safe.replace(new RegExp(flexibleEncodedPattern(secret), "gu"), "***");
 	}
 	return safe;
 }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-search",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "同时兼容 DSH 与 Pi 的网页搜索/抓取插件：匿名优先、费用授权、额度预检与有界取消",
   "type": "module",
   "main": "./lib/index.js",
