@@ -1,6 +1,6 @@
 /** 额度状态存储：只保存 HMAC scope 标识和冷却元数据，不保存凭据或请求内容。 */
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readdir, rename, unlink } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, rename, unlink } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 
@@ -89,7 +89,8 @@ function validateState(value: unknown): StateValidation {
 	const entries: PersistedQuotaEntry[] = [];
 	for (const item of record.entries) {
 		if (item === null || typeof item !== "object" || Array.isArray(item)) return undefined;
-		const row = item as Record<string, unknown>;
+		// 升级前写下的文件用旧字段名，先归一化再校验。
+		const row = normalizeEntryKeys(item as Record<string, unknown>);
 		if (Object.keys(row).some((key) => !["scopeId", "backend", "channel", "reason", "failureCount", "until", "lastFailureAt", "updatedAt", "sequence", "cleared"].includes(key))) return undefined;
 		if (typeof row.scopeId !== "string" || !/^[a-f0-9]{64}$/u.test(row.scopeId)) return undefined;
 		if (!BACKENDS.has(row.backend as QuotaBackend) || (row.channel !== "anonymous" && row.channel !== "key") || !REASONS.has(row.reason as QuotaFailureReason)) return undefined;
@@ -113,6 +114,30 @@ function validateState(value: unknown): StateValidation {
 		});
 	}
 	return { version: 1, salt: record.salt, entries };
+}
+
+/**
+ * 旧版本的字段名 → 当前字段名。
+ *
+ * 升级后磁盘上会留着上一版写下的状态文件；若只做严格校验，这些文件会被判为
+ * 损坏，让持久化在升级后永久降级——冷却记录本身无害，但"静默失效"不可接受。
+ */
+const LEGACY_ENTRY_KEYS: Readonly<Record<string, string>> = {
+	scope: "scopeId",
+	failures: "failureCount",
+	lastAt: "lastFailureAt",
+};
+
+/** 把旧字段名就地归一化；没有旧字段时原样返回，不复制对象。 */
+function normalizeEntryKeys(row: Record<string, unknown>): Record<string, unknown> {
+	let normalized = row;
+	for (const [legacy, current] of Object.entries(LEGACY_ENTRY_KEYS)) {
+		if (!(legacy in row) || current in row) continue;
+		if (normalized === row) normalized = { ...row };
+		normalized[current] = row[legacy];
+		delete normalized[legacy];
+	}
+	return normalized;
 }
 
 function entryKey(entry: Pick<PersistedQuotaEntry, "scopeId" | "reason">): string {
@@ -306,7 +331,9 @@ function entryFileName(entry: Pick<PersistedQuotaEntry, "scopeId" | "reason">): 
 
 const ENTRY_PATTERN = /^scope-([a-f0-9]{64})-(rate_limited|quota_exhausted)\.json$/u;
 /** 本模块自己创建的文件名；其他文件一律视为不可安全接管。 */
-const KNOWN_ENTRY = /^(?:quota-salt\.json|\.quota-state\.lock(?:\.[a-f0-9]+\.recovery)?|scope-[a-f0-9]{64}-(?:rate_limited|quota_exhausted)\.json|\.quota-tmp-\d+-[a-f0-9]+\.tmp)$/u;
+// state.json 是上一版的聚合状态文件；state.json.migrated 是迁移后保留的原件。
+// 不认这两个名字会让升级后的目录被整目录判为损坏，持久化永久降级。
+const KNOWN_ENTRY = /^(?:quota-salt\.json|state\.json(?:\.migrated)?|\.quota-state\.lock(?:\.[a-f0-9]+\.recovery)?|scope-[a-f0-9]{64}-(?:rate_limited|quota_exhausted)\.json|\.quota-tmp-\d+-[a-f0-9]+\.tmp)$/u;
 
 async function readEntries(directory: string): Promise<
 	| { status: "ok"; entries: Map<string, PersistedQuotaEntry> }
@@ -370,6 +397,43 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 		return checked === undefined || checked === "too_large" ? "corrupt" : checked;
 	};
 
+/**
+ * 把上一版的聚合状态文件迁移成当前的"盐 + 每 scope 一个文件"布局。
+ *
+ * 升级后磁盘上会留着旧 `state.json`。早期实现把不认识的目录项一律当作
+ * 不可安全接管，结果升级后持久化永久降级——冷却记录本身无害，但静默失效
+ * 不可接受。这里做一次性迁移，并把原件改名为 `state.json.migrated` 保留证据。
+ */
+	const migrateLegacyState = async (): Promise<void> => {
+		const legacyPath = join(base, "state.json");
+		let raw: string;
+		try {
+			const info = await lstat(legacyPath);
+			if (!info.isFile()) return;
+			raw = await readFile(legacyPath, "utf8");
+		} catch {
+			return; // 没有旧文件是常态。
+		}
+		let parsed: unknown;
+		try { parsed = JSON.parse(raw); } catch { return; }
+		const checked = validateState(parsed);
+		// 结构不成立的旧文件不迁移：留给后续判定按损坏上报，不猜测内容。
+		if (typeof checked !== "object") return;
+		try {
+			const saltHandle = await open(saltPath, "wx", 0o600);
+			try {
+				await saltHandle.writeFile(JSON.stringify({ version: 1, salt: checked.salt }), "utf8");
+				await saltHandle.sync();
+			} finally { await saltHandle.close(); }
+		} catch {
+			// 盐文件已存在：继续用已有的，迁移只补齐条目。
+		}
+		for (const entry of checked.entries) {
+			await atomicWrite(join(base, entryFileName(entry)), JSON.stringify({ version: 1, entry }));
+		}
+		await rename(legacyPath, join(base, "state.json.migrated"));
+	};
+
 	const load = async (): Promise<QuotaStateLoadResult> => {
 		try {
 			await ensureDirectory(base);
@@ -382,6 +446,7 @@ export function createPrivateQuotaStateStore(directory: string): QuotaStateStore
 			blocked = undefined;
 			let saltState: PersistedQuotaState | "missing" | "corrupt" | "unknown_version";
 			try {
+				await migrateLegacyState();
 				saltState = await readSalt();
 				if (saltState === "missing") {
 					const names = await readdir(base);
