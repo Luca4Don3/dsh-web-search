@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 
 import { FetchError } from "../errors.js";
 import type { FetchMode } from "../params.js";
+import { escapeMarkdownLabel } from "../../shared/markdown.js";
 import { safeSlice } from "../../shared/truncate.js";
 
 export interface ExtractionResult {
@@ -611,10 +612,6 @@ function safeHref(href: string, baseUrl?: URL): string | undefined {
 	}
 }
 
-function escapeMarkdownLabel(label: string): string {
-	return label.replace(/[\\[\]`]/gu, (character) => `\\${character}`);
-}
-
 function protectForFinalDecode(value: string): string {
 	return value.replace(/[&<>]/gu, (character) => character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;");
 }
@@ -713,22 +710,37 @@ export function tidy(text: string): string {
 type ExtractionBase = { markdown: string; title?: string };
 
 /** HTML → Markdown；代码先隔离，经过其他转换后再恢复，避免解码的 `<T>` 被当作标签。 */
-export function htmlToMarkdown(html: string, baseUrl?: URL): ExtractionBase {
+/**
+ * `check` 是截止时间/取消检查器：整个转换是同步流水线，定时器与取消信号
+ * 无法抢占，只能在阶段之间主动检查。不加检查点时，一个 5MB 页面能让
+ * 宿主主线程连续阻塞 1.4 秒，期间取消与超时完全失效。
+ */
+export function htmlToMarkdown(html: string, baseUrl?: URL, check?: () => void): ExtractionBase {
+	check?.();
 	const cleaned = stripNoise(html);
+	check?.();
 	const title = extractTitle(cleaned);
 	const isolated = isolateCode(pickContainer(cleaned), cleaned);
+	check?.();
 	const withLinks = convertLinks(isolated.html, baseUrl, true);
+	check?.();
 	const withTables = tables(withLinks);
 	const withHeadings = headings(withTables);
 	const withLists = listItems(withHeadings);
+	check?.();
 	const markdown = restoreTokens(tidy(decodeEntities(stripMarkupRaw(blockify(withLists)))), isolated.values);
+	check?.();
 	return { ...(title === undefined ? {} : { title }), markdown };
 }
 
-function htmlToText(html: string): string {
+function htmlToText(html: string, check?: () => void): string {
+	check?.();
 	const cleaned = stripNoise(html);
+	check?.();
 	const isolated = isolateCode(pickContainer(cleaned), cleaned, true);
+	check?.();
 	const flattened = decodeEntities(stripMarkupRaw(blockify(isolated.html)));
+	check?.();
 	return restoreTokens(tidy(flattened), isolated.values);
 }
 
@@ -845,7 +857,7 @@ function truncateMarkdown(markdown: string, maxChars: number): string {
  * 按内容类型与模式选择提取路径。可选 baseUrl 只用于本地链接绝对化，不会触发请求。
  * 只有内容长度严格大于 maxChars 时才设置 truncated。
  */
-export function extractContent(body: string, contentType: string, mode: FetchMode, maxChars: number, baseUrl?: URL): ExtractionResult {
+export function extractContent(body: string, contentType: string, mode: FetchMode, maxChars: number, baseUrl?: URL, check?: () => void): ExtractionResult {
 	// 与 fetchPage 使用同一套模式校验：提取入口本身也要拒绝未知模式，
 	// 否则直接调用方会静默拿到非预期分支的结果。
 	if (mode !== "auto" && mode !== "article" && mode !== "text") throw new FetchError("mode 不受支持", "invalid_url");
@@ -855,17 +867,19 @@ export function extractContent(body: string, contentType: string, mode: FetchMod
 	const isJson = subtype === "json" || subtype.endsWith("+json");
 	const isText = subtype === "plain" || subtype.startsWith("text/");
 
+	check?.();
 	const base = isJson
 		? jsonToMarkdown(body)
 		: isMarkdown
 			? markdownToMarkdown(body)
 			: isHtml
 				? mode === "text"
-					? { markdown: htmlToText(body) }
-					: htmlToMarkdown(body, baseUrl)
+					? { markdown: htmlToText(body, check) }
+					: htmlToMarkdown(body, baseUrl, check)
 				: isText
 					? textToMarkdown(body)
 					: undefined;
+	check?.();
 	if (base === undefined) throw new FetchError("目标内容类型不受支持", "unsupported_content");
 	if (base.markdown.trim().length === 0) throw new FetchError("未能从响应中提取到正文", "extraction_failed");
 	const truncated = base.markdown.length > maxChars;

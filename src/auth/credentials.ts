@@ -119,6 +119,27 @@ export const WRITE_EXEC_TIMEOUT_MS = 30_000;
  * 超过 timeoutMs 仍未结束时杀掉子进程并 reject（由调用方归为 unavailable），
  * 避免密钥库挂起把整个搜索或菜单永久卡住。
  */
+/**
+ * 活跃的独立进程组。用一个模块级监听器统一清理：若每次调用都挂
+ * `process.on("exit")`，并发 N 次就会累积 N 个监听器，超过 Node 默认上限。
+ */
+const liveProcessGroups = new Set<number>();
+let exitHookInstalled = false;
+const killAllProcessGroups = (): void => {
+	for (const pid of liveProcessGroups) {
+		try { process.kill(-pid, "SIGKILL"); } catch { /* 已退出 */ }
+	}
+};
+const trackProcessGroup = (pid: number): void => {
+	liveProcessGroups.add(pid);
+	if (exitHookInstalled) return;
+	exitHookInstalled = true;
+	process.on("exit", killAllProcessGroups);
+};
+const untrackProcessGroup = (pid: number): void => {
+	liveProcessGroups.delete(pid);
+};
+
 export function spawnExec(
 	bin: string,
 	args: string[],
@@ -136,20 +157,16 @@ export function spawnExec(
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		let onAbort: (() => void) | undefined;
-		// 独立进程组不再接收终端 Ctrl+C；进程退出时补一次整组清理，
-		// 避免宿主被中断后留下仍在访问密钥库的子进程。
-		const onExit = (): void => {
-			if (child.pid === undefined || process.platform === "win32") return;
-			try { process.kill(-child.pid, "SIGKILL"); } catch { /* 已退出 */ }
-		};
-		process.on("exit", onExit);
+		// 独立进程组不再接收终端 Ctrl+C；登记到共享清理表，进程退出时统一终止。
+		const groupPid = child.pid;
+		if (groupPid !== undefined && process.platform !== "win32") trackProcessGroup(groupPid);
 		/** 只允许第一个结果生效，并清理本次调用创建的定时器和取消监听。 */
 		const finish = (settle: () => void): void => {
 			if (settled) return;
 			settled = true;
 			if (timer !== undefined) clearTimeout(timer);
 			if (onAbort !== undefined) signal?.removeEventListener("abort", onAbort);
-			process.removeListener("exit", onExit);
+			if (groupPid !== undefined) untrackProcessGroup(groupPid);
 			settle();
 		};
 		const kill = (): void => {
@@ -157,7 +174,10 @@ export function spawnExec(
 				if (process.platform === "win32") {
 					// Windows 没有进程组信号：用 taskkill 终止整棵进程树。
 					try {
-						spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" }).unref();
+						// taskkill 可能不存在：必须挂 error 监听，否则 'error' 事件无人处理会终止整个进程。
+						const killer = spawn("taskkill", ["/T", "/F", "/PID", String(child.pid)], { stdio: "ignore" });
+						killer.on("error", () => undefined);
+						killer.unref();
 						return;
 					} catch {
 						// 退回直接终止。

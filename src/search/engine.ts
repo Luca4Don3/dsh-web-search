@@ -37,6 +37,7 @@ import { ANONYMOUS_PROVIDER_ORDER, BILLABLE_PROVIDER_ORDER, getProviderMetadata,
 import { parseMcpBlocks } from "./mcp-protocol.js";
 import { DEFAULT_MAX_RESPONSE_BYTES, MAX_RESPONSE_BYTES, readResponseTextLimited } from "../shared/response-body.js";
 import { parseRetryAfter, RETRY_AFTER_MAX_MS } from "../shared/retry-after.js";
+import { collapseLineBreaks, escapeMarkdownLabel, escapeMarkdownUrl } from "../shared/markdown.js";
 import { safeSlice } from "../shared/truncate.js";
 import { expandSecrets, MAX_SECRET_CHARS, redactSecrets } from "../shared/redact.js";
 import { createQuotaManager, type QuotaChannel } from "../quota/core.js";
@@ -124,7 +125,7 @@ const DEFAULT_NUM_RESULTS = 8;
 const MAX_TEXT_CHARS = 24_000;
 const RETRY_BASE_MS = 400;
 const RETRY_MAX_WAIT_MS = 5_000;
-const USER_AGENT = "dsh-web-search/0.2.5";
+const USER_AGENT = "dsh-web-search/0.2.6";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
@@ -243,10 +244,12 @@ function renderSources(sources: readonly SearchSource[], fallback: string): stri
 	if (sources.length === 0) return fallback;
 	return sources
 		.map((source, index) => {
-			const title = source.title ?? source.url;
-			const meta = source.publishedAt !== undefined ? ` (${source.publishedAt})` : "";
-			const snippet = source.snippet !== undefined ? `\n   ${source.snippet}` : "";
-			return `${index + 1}. [${title}](${source.url})${meta}${snippet}`;
+			// 标题与摘要完全由上游网页控制：不转义时 `](` 能提前闭合链接，
+			// 换行还会凭空生成新的列表项，看起来像工具自己输出的引用。
+			const title = source.title === undefined ? escapeMarkdownUrl(source.url) : escapeMarkdownLabel(collapseLineBreaks(source.title));
+			const meta = source.publishedAt === undefined ? "" : ` (${escapeMarkdownLabel(collapseLineBreaks(source.publishedAt))})`;
+			const snippet = source.snippet === undefined ? "" : `\n   ${escapeMarkdownLabel(collapseLineBreaks(source.snippet))}`;
+			return `${index + 1}. [${title}](${escapeMarkdownUrl(source.url)})${meta}${snippet}`;
 		})
 		.join("\n");
 }

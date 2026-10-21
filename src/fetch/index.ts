@@ -102,7 +102,9 @@ export async function fetchPage(request: FetchRequest, config: WebFetchConfig, d
 		}));
 		const extract = dependencies.extract ?? extractContent;
 		deadline.check();
-		const extracted = extract(fetched.body, fetched.contentType, mode, maxChars, fetched.finalUrl);
+		// 把截止时间检查传进提取流水线：同步转换无法被定时器抢占，
+		// 只能在阶段之间主动检查，否则 5MB 页面会连续阻塞到超时之后。
+		const extracted = extract(fetched.body, fetched.contentType, mode, maxChars, fetched.finalUrl, deadline.check);
 		// 同步提取不可被计时器抢占，完成后必须检查真实时钟，不返回过期正文。
 		deadline.check();
 		return {

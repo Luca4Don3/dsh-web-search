@@ -45,7 +45,12 @@ type ExtractionBase = {
     title?: string;
 };
 /** HTML → Markdown；代码先隔离，经过其他转换后再恢复，避免解码的 `<T>` 被当作标签。 */
-export declare function htmlToMarkdown(html: string, baseUrl?: URL): ExtractionBase;
+/**
+ * `check` 是截止时间/取消检查器：整个转换是同步流水线，定时器与取消信号
+ * 无法抢占，只能在阶段之间主动检查。不加检查点时，一个 5MB 页面能让
+ * 宿主主线程连续阻塞 1.4 秒，期间取消与超时完全失效。
+ */
+export declare function htmlToMarkdown(html: string, baseUrl?: URL, check?: () => void): ExtractionBase;
 /** Markdown 直读不规整空白，避免损坏代码缩进、制表符与空行。 */
 export declare function markdownToMarkdown(body: string): ExtractionBase;
 /** 纯文本直读不规整空白，保留缩进、制表符、尖括号与空行。 */
@@ -56,5 +61,5 @@ export declare function jsonToMarkdown(body: string): ExtractionBase;
  * 按内容类型与模式选择提取路径。可选 baseUrl 只用于本地链接绝对化，不会触发请求。
  * 只有内容长度严格大于 maxChars 时才设置 truncated。
  */
-export declare function extractContent(body: string, contentType: string, mode: FetchMode, maxChars: number, baseUrl?: URL): ExtractionResult;
+export declare function extractContent(body: string, contentType: string, mode: FetchMode, maxChars: number, baseUrl?: URL, check?: () => void): ExtractionResult;
 export {};

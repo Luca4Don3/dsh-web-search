@@ -79,13 +79,6 @@ export interface SecretStore {
 export declare const EXEC_TIMEOUT_MS = 5000;
 /** Swift 首次解释/编译适配器可能较慢，写入单独给予更长超时。 */
 export declare const WRITE_EXEC_TIMEOUT_MS = 30000;
-/**
- * 真实执行一个子进程。
- * stdin 只在需要时写入并立即关闭；stdout / stderr 只缓存在内存，
- * 由调用方决定是否使用，不会进入日志。
- * 超过 timeoutMs 仍未结束时杀掉子进程并 reject（由调用方归为 unavailable），
- * 避免密钥库挂起把整个搜索或菜单永久卡住。
- */
 export declare function spawnExec(bin: string, args: string[], stdin?: string, timeoutMs?: number, signal?: AbortSignal): Promise<ExecResult>;
 /** 取配置账号名：优先 $USER，回退系统用户名。与配置命令里的 `-a "$USER"` 对齐。 */
 export declare function currentAccount(): string;
