@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-search",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "同时兼容 DSH 与 Pi 的网页搜索/抓取插件：匿名优先、费用授权、额度预检与有界取消",
   "type": "module",
   "main": "./lib/index.js",
@@ -60,6 +60,9 @@
     "web-fetch"
   ],
   "dsh": {
+    "engines": {
+      "dsh": ">=0.2.1-rc.2 <0.3.0"
+    },
     "bundle": {
       "patch": "cordis.patch.yml"
     }
@@ -71,7 +74,7 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-web": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-web": ">=0.2.1-rc.2 <0.3.0",
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
@@ -99,8 +102,9 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.5",
-    "@deepseek-ai/dsh-web": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-web": "0.2.1-rc.3",
     "@types/node": "^24.10.0",
+    "jiti": "2.6.1",
     "typescript": "^5.9.3",
     "yaml": "^2.8.2"
   }

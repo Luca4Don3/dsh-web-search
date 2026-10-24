@@ -14,7 +14,7 @@ async function stateDirectory() {
   return mkdtemp(join(process.cwd(), ".temp/sdk/state-"));
 }
 
-test("真实 0.2.1-rc.2 WebRuntime 加载单一聚合提供方，保留已有搜索及抓取", async () => {
+test("真实宿主 WebRuntime 加载单一聚合提供方，保留已有搜索及抓取", async () => {
   const ctx = new Context();
   const runtime = await ctx.plugin(WebRuntime, { searchProvider: "free-first", fetchProvider: "http" });
   let officialSearchCalls = 0;
