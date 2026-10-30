@@ -121,6 +121,16 @@ async function readLimited(response: Response, maxBytes: number, options: ReadOp
 	if (!isValidLimit(maxBytes)) throw new Error(INVALID_LIMIT_MESSAGE);
 	const { signal, errors } = options;
 	const abortRequest = options.abortRequest;
+	// 底层 Request 在已结束/已锁定状态下 destroy 可能同步抛错或产生未捕获的
+	// DOMException；取消失败不得覆盖原始错误分类，更不能拖垮宿主进程。
+	const safeAbort = (): void => {
+		if (abortRequest === undefined) return;
+		try {
+			abortRequest();
+		} catch {
+			// 取消失败已在 readLimited 的 finally 中通过 cancel/releaseLock 兜底。
+		}
+	};
 	if (signal.aborted) {
 		cancelUnlockedBody(response);
 		throw errors.aborted();
@@ -133,7 +143,7 @@ async function readLimited(response: Response, maxBytes: number, options: ReadOp
 		decoder = decoderFor(response, options);
 	} catch (error) {
 		cancelUnlockedBody(response);
-		abortRequest?.();
+		safeAbort();
 		if (options.decode === "declared" && errors.undecodable !== undefined) throw errors.undecodable();
 		throw error;
 	}
@@ -143,7 +153,7 @@ async function readLimited(response: Response, maxBytes: number, options: ReadOp
 		reader = body.getReader();
 	} catch {
 		cancelUnlockedBody(response);
-		abortRequest?.();
+		safeAbort();
 		throw errors.unreadable?.() ?? errors.tooLarge();
 	}
 
@@ -207,7 +217,7 @@ async function readLimited(response: Response, maxBytes: number, options: ReadOp
 			}
 			totalBytes += result.value.value.byteLength;
 			if (totalBytes > maxBytes) {
-				abortRequest?.();
+				safeAbort();
 				cancel();
 				throw errors.tooLarge();
 			}
@@ -221,7 +231,7 @@ async function readLimited(response: Response, maxBytes: number, options: ReadOp
 		}
 	} finally {
 		if (onAbort) signal.removeEventListener("abort", onAbort);
-		if (!completed && !signal.aborted) abortRequest?.();
+		if (!completed && !signal.aborted) safeAbort();
 		if (!completed) cancel();
 		releaseLock();
 		if (pendingRead !== undefined) void pendingRead.then(releaseLock, releaseLock);

@@ -244,3 +244,80 @@ test("有界读取：读取前取消立即拒绝", async () => {
 	controller.abort();
 	await assert.rejects(body.readResponseTextLimited(new Response("abc"), 3, controller), { name: "FetchError" });
 });
+
+test("超限中止后不再产生未捕获异常", async () => {
+	const uncaught = [];
+	const onUncaught = (error) => uncaught.push(error);
+	process.on("uncaughtException", onUncaught);
+	try {
+		await withServer((request, response) => {
+			// 测试服务器自身也要消费客户端中止后的写错误，否则夹具会被它带崩。
+			response.on("error", () => undefined);
+			response.writeHead(200, { "content-type": "text/html" });
+			const chunk = Buffer.alloc(64 * 1024, 0x61);
+			let sent = 0;
+			const pump = () => {
+				while (sent < 8 * 1024 * 1024) {
+					sent += chunk.length;
+					response.write(chunk);
+					if (response.writableNeedDrain) {
+						response.once("drain", pump);
+						return;
+					}
+				}
+				response.end();
+			};
+			pump();
+		}, async (base) => {
+			await assert.rejects(
+				client.httpFetch({ ...baseRequest(base), resolveTarget: localResolver(base) }),
+				(error) => error.kind === "response_too_large",
+			);
+			// 中止引发的 socket 错误晚于 httpFetch 的清理到达，必须被消费掉。
+			await new Promise((resolve) => setTimeout(resolve, 300));
+		});
+	} finally {
+		process.off("uncaughtException", onUncaught);
+	}
+	assert.deepEqual(uncaught, []);
+});
+
+test("取消竞速在 abort 监听器内同步抛出的 AbortError 不会逃逸到宿主", async () => {
+	// abort 监听器运行在 controller.abort() 的调用栈里；请求已结束时 destroy()
+	// 会同步抛出 AbortError。那个异常不是本次读取的业务错误，必须被隔离。
+	// 这里直接断言：调用方只看到分类过的 FetchError，且没有任何同步异常逃逸。
+	const uncaught = [];
+	const onUncaught = (error) => uncaught.push(error);
+	process.on("uncaughtException", onUncaught);
+	try {
+		await withServer((request, response) => {
+			response.on("error", () => undefined);
+			response.writeHead(200, { "content-type": "text/html" });
+			const chunk = Buffer.alloc(64 * 1024, 0x61);
+			let sent = 0;
+			const pump = () => {
+				while (sent < 8 * 1024 * 1024) {
+					sent += chunk.length;
+					response.write(chunk);
+					if (response.writableNeedDrain) {
+						response.once("drain", pump);
+						return;
+					}
+				}
+				response.end();
+			};
+			pump();
+		}, async (base) => {
+			// 超限路径：readLimited 在 abort 监听器运行期间调用 controller.abort()，
+			// 此时请求已结束，destroy() 会同步抛出 AbortError。出厂版本必然逃逸。
+			await assert.rejects(
+				client.httpFetch({ ...baseRequest(base), resolveTarget: localResolver(base) }),
+				(error) => error.kind === "response_too_large",
+			);
+			await new Promise((resolve) => setTimeout(resolve, 300));
+		});
+	} finally {
+		process.off("uncaughtException", onUncaught);
+	}
+	assert.deepEqual(uncaught, [], "取消路径不得产生未捕获异常");
+});

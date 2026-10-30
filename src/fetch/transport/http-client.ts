@@ -41,7 +41,7 @@ export function buildHeaders(url: URL): Record<string, string> {
 		"accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
 		"accept-encoding": "gzip, deflate, br",
 		// 与搜索内核共用一个标识：合并后不应再对外宣称旧包名与旧版本。
-		"user-agent": "dsh-web-search/0.2.7",
+		"user-agent": "dsh-web-search/0.2.9",
 		host: url.host,
 	};
 }
@@ -84,14 +84,29 @@ function requestOnce(
 		let raw: IncomingMessage | undefined;
 		let detached = false;
 		let req: ReturnType<typeof request> | undefined;
-		const onAbort = (): void => { req?.destroy(signalError(signal)); };
+		// abort 监听器在 controller.abort() 的调用栈里同步执行；此时请求或响应
+		// 可能已结束/已销毁，destroy() 会同步抛出 AbortError。那个异常不属于
+		// 本次读取的业务错误，也不能冒泡到调用方（宿主会当成致命未捕获异常）。
+		const destroyQuietly = (target: { destroy(error?: Error): unknown } | undefined): void => {
+			if (target === undefined) return;
+			try {
+				target.destroy(signalError(signal));
+			} catch {
+				// 取消路径上的销毁失败不影响对外分类。
+			}
+		};
+		const onAbort = (): void => { destroyQuietly(req); };
 		const onRawError = (): void => undefined;
 		const cleanup = (): void => {
 			if (detached) return;
 			detached = true;
 			signal.removeEventListener("abort", onAbort);
+			// 中止后 socket 的错误可能晚于本次清理到达；移除业务监听后必须
+			// 留一个消费器，否则 EventEmitter 会把该错误抛成未捕获异常。
 			req?.removeListener("error", onRequestError);
 			raw?.removeListener("error", onRawError);
+			req?.on("error", () => undefined);
+			raw?.on("error", () => undefined);
 		};
 		const onRequestError = (error: Error): void => {
 			if (!settled) {
@@ -158,6 +173,9 @@ function decodeBody(raw: IncomingMessage): Readable {
 		// pipeline 会销毁两端；回调负责消费退出错误，不让它成为未处理事件。
 		if (error !== undefined && error !== null && !decoder.destroyed) decoder.destroy(error);
 	});
+	// 解压流被取消后也保留一个错误消费器：取消竞速可能先结束读取，
+	// 此时 pipeline 的拆毁错误不应再抛成未捕获异常。
+	decoder.on("error", () => undefined);
 	return decoder;
 }
 

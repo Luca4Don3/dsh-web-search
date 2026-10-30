@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-search",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "同时兼容 DSH 与 Pi 的网页搜索/抓取插件：匿名优先、费用授权、额度预检与有界取消",
   "type": "module",
   "main": "./lib/index.js",
@@ -44,6 +44,7 @@
     "test": "npm run build && npm run test:dsh && npm run test:pi",
     "test:dsh": "node --test --test-timeout=30000 tests/*.test.mjs",
     "test:pi": "node --test --test-timeout=30000 tests/pi/*.test.mjs tests/fetch/*.test.mjs",
+    "test:hosts": "node scripts/test-dsh-hosts.mjs",
     "smoke": "npm run build && node tests/smoke.mjs",
     "check:entry": "tsc -p tsconfig.entry.json"
   },
