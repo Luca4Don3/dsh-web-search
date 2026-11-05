@@ -211,6 +211,11 @@ export function createPlugin(dependencies: { fetch?: typeof globalThis.fetch; en
 		inject,
 		Config,
 		apply(ctx: Context, config: DshConfig = {}): void {
+			// 使用宿主提供的注册接口，不按单一版本号分支，也不自动安装或替换宿主依赖。
+			const web = ctx.web;
+			if (typeof web?.registerSearchProvider !== "function" || typeof web?.registerFetchProvider !== "function") {
+				throw new WebError("当前宿主缺少网页搜索或抓取注册接口", "WEB_SEARCH_UNSUPPORTED_HOST");
+			}
 			const stateDirectory = config.stateDirectory ?? defaultStateDirectory(dependencies.env);
 			if (typeof stateDirectory !== "string" || stateDirectory.length === 0 || !isAbsolute(stateDirectory)) {
 				throw new WebError("冷却状态目录必须为绝对路径", "WEB_SEARCH_INVALID_CONFIG");
@@ -246,8 +251,8 @@ export function createPlugin(dependencies: { fetch?: typeof globalThis.fetch; en
 			let unregisterSearch: () => void;
 			let unregisterFetch: () => void;
 			try {
-				unregisterSearch = ctx.web.registerSearchProvider(provider);
-				unregisterFetch = ctx.web.registerFetchProvider(fetcher);
+				unregisterSearch = web.registerSearchProvider(provider);
+				unregisterFetch = web.registerFetchProvider(fetcher);
 			} catch (error) {
 				void provider.dispose().catch(() => undefined);
 				fetcher.dispose();

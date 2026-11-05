@@ -125,7 +125,7 @@ const DEFAULT_NUM_RESULTS = 8;
 const MAX_TEXT_CHARS = 24_000;
 const RETRY_BASE_MS = 400;
 const RETRY_MAX_WAIT_MS = 5_000;
-const USER_AGENT = "dsh-web-search/0.2.9";
+const USER_AGENT = "dsh-web-search/0.3.0";
 
 const EXA_MCP_URL = "https://mcp.exa.ai/mcp";
 const PARALLEL_MCP_URL = "https://search.parallel.ai/mcp";
@@ -294,6 +294,20 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 	let disposed = false;
 	/** 是否真正触发过额度初始化；未初始化时关闭实例不写任何状态。 */
 	let initializedOnce = false;
+	/** 失败与关闭共用有界收尾；保存异常不能替换原始搜索错误。 */
+	async function flushQuotaBounded(): Promise<void> {
+		if (!initializedOnce) return;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			await Promise.race([
+				Promise.resolve().then(() => quota.flush()).catch(() => undefined),
+				new Promise<void>((resolve) => { timer = setTimeout(resolve, 250); }),
+			]);
+		} finally {
+			if (timer !== undefined) clearTimeout(timer);
+		}
+	}
+
 	const active = new Set<AbortController>();
 	const env = deps.env ?? process.env;
 	// 生产使用实例私有的 undici fetch；测试可注入替换，不影响宿主全局。
@@ -596,6 +610,7 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 		const forward = (): void => controller.abort();
 		signal?.addEventListener("abort", forward, { once: true });
 		if (isAborted(signal)) controller.abort();
+		let failed = false;
 		try {
 			checkAborted(controller.signal);
 			// 状态目录不可用（未知文件、权限、平台不支持）只降级为警告，不阻断搜索。
@@ -716,11 +731,8 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 			(error as SearchError & { failures?: readonly SearchFailure[] }).failures = failures;
 			throw error;
 		} catch (error) {
-			if (isAborted(signal)) {
-				// 取消或超时前已记录的冷却仍要落盘：不能依赖正常完成路径。
-				if (initializedOnce) await Promise.race([quota.flush().catch(() => undefined), new Promise<void>((resolve) => setTimeout(resolve, 250))]);
-				throw new SearchError("ABORTED");
-			}
+			failed = true;
+			if (isAborted(signal)) throw new SearchError("ABORTED");
 			if (disposed) throw new SearchError("DISPOSED");
 			if (error instanceof SearchError) throw error;
 			// 配置与凭据错误必须原样上抛：把它们折叠成"全部不可用"会让调用方
@@ -737,6 +749,8 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 		} finally {
 			signal?.removeEventListener("abort", forward);
 			active.delete(controller);
+			// 先确定原错误，再保存失败、预算耗尽或取消前记录的冷却。
+			if (failed) await flushQuotaBounded();
 		}
 	}
 
@@ -764,11 +778,7 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 			if (disposed) return;
 			disposed = true;
 			for (const controller of active) controller.abort();
-			// 从未初始化过额度状态时不写任何文件：未使用的实例关闭必须无副作用。
-			if (!initializedOnce) return;
-			let timer: ReturnType<typeof setTimeout> | undefined;
-			await Promise.race([quota.flush().catch(() => "degraded" as const), new Promise<void>((resolve) => { timer = setTimeout(resolve, 250); })]);
-			if (timer) clearTimeout(timer);
+			await flushQuotaBounded();
 		},
 	};
 }

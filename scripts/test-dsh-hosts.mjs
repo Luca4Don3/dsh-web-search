@@ -37,7 +37,8 @@ for (const [index, modules] of hosts.entries()) {
   console.log(`
 === official Web ${manifest.version}; Cordis ${cordis.version} ===`);
   const child = spawnSync(process.execPath, ["--test", "--test-timeout=30000", "web-contract.test.mjs"], {
-    cwd: stage, encoding: "utf8", env: { PATH: process.env.PATH, HOME: join(stage, "home"), TMPDIR: stage },
+    cwd: stage, encoding: "utf8", timeout: 35_000,
+    env: { PATH: process.env.PATH, HOME: join(stage, "home"), TMPDIR: stage },
   });
   process.stdout.write(child.stdout ?? "");
   process.stderr.write(child.stderr ?? "");

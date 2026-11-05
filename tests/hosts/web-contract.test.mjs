@@ -29,6 +29,15 @@ function code(expected) {
   return (error) => error instanceof WebError && error.code === expected;
 }
 
+test("按注册接口能力适配宿主，接口缺失时在初始化前明确失败", () => {
+  const candidate = plugin();
+  for (const web of [undefined, {}, { registerSearchProvider() {} }, { registerFetchProvider() {} },
+    { registerSearchProvider: true, registerFetchProvider() {} }]) {
+    assert.throws(() => candidate.apply({ web, effect() { assert.fail("不支持的宿主不得注册副作用"); } }),
+      code("WEB_SEARCH_UNSUPPORTED_HOST"));
+  }
+});
+
 test("匿名提供方不依赖凭据/LLM 服务；保持注册 API、固定 id 和原生返回结构", async () => {
   await withContext(async (ctx) => {
     let calls = 0;
@@ -124,7 +133,11 @@ test("重复抓取 id 导致加载失败时不遗留已注册搜索；解除冲�
   await withContext(async (ctx) => {
     const unregister = ctx.web.registerFetchProvider({ id: "local-first", available: () => true, fetch: async () => { assert.fail("冲突占位"); } });
     const candidate = ctx.plugin(plugin(), { stateDirectory: await directory() });
-    await assert.rejects(candidate, code("WEB_DUPLICATE_PROVIDER"));
+    await assert.rejects(async () => {
+      // 旧版返回激活承诺，新版直接返回 Fiber，显式等待兼容两种行为。
+      const fiber = await candidate;
+      await fiber.await();
+    }, code("WEB_DUPLICATE_PROVIDER"));
     await assert.rejects(ctx.web.search({ query: "失败清理" }), code("WEB_PROVIDER_CONFIGURED_MISSING"));
     unregister();
     await ctx.plugin(plugin(), { stateDirectory: await directory() });

@@ -6,10 +6,12 @@
  */
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti";
 
+const { version } = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
 const jiti = createJiti(import.meta.url);
 const client = await jiti.import(fileURLToPath(new URL("../../src/fetch/transport/http-client.ts", import.meta.url)));
 const body = await jiti.import(fileURLToPath(new URL("../../src/fetch/transport/response-body.ts", import.meta.url)));
@@ -215,7 +217,7 @@ test("请求头白名单不含 Cookie 与 Authorization", async () => {
 	await withServer((request, response) => {
 		assert.equal(request.headers.cookie, undefined);
 		assert.equal(request.headers.authorization, undefined);
-		assert.equal(request.headers["user-agent"], "dsh-web-search/0.2.7");
+		assert.equal(request.headers["user-agent"], `dsh-web-search/${version}`);
 		send(response, "ok");
 	}, async (base) => {
 		const result = await client.httpFetch({ ...baseRequest(base), resolveTarget: localResolver(base) });

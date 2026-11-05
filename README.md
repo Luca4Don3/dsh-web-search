@@ -1,5 +1,9 @@
 # dsh-web-search
 
+[![Tests](https://github.com/Luca4Don3/dsh-web-search/actions/workflows/test.yml/badge.svg)](https://github.com/Luca4Don3/dsh-web-search/actions/workflows/test.yml)
+
+v0.3.0 适配 DSH `0.2.2-rc.1`／Cordis `4.1.0`：宿主依赖改为有边界的兼容范围＋运行时接口检测，并修复失败路径的冷却落盘。
+
 同时兼容 **DSH** 与 **Pi** 的网页搜索 / 网页抓取插件，一个仓库、一份内核、两套宿主适配。
 
 | 能力 | DSH | Pi |
@@ -36,6 +40,8 @@ dsh plugin --profile <profile> add link:<server_path>/dsh-web-search
 ```
 
 `cordis.patch.yml` 会同时启用 `free-first`（搜索）与 `local-first`（抓取）。抓取提供方使用独立 id，因为官方插件已占用 `http`；若你已有自定义 `fetchProvider`，请保留你的选择。
+
+宿主依赖使用有边界的兼容范围，不再锁定单个 Cordis 版本：支持 `^4.0.5`，网页服务覆盖既有 `0.2.1-rc.2` 与 `0.2.2` 预发布系列。运行时直接使用宿主的搜索／抓取注册接口；缺少必要接口时明确报告 `WEB_SEARCH_UNSUPPORTED_HOST`，不自动安装、升级或替换宿主依赖。兼容范围不等于所有未来版本都已验收，仍需运行宿主矩阵测试；开发锁文件只固定可复现的测试基线。
 
 ### Pi
 
@@ -130,6 +136,7 @@ pi install <server_path>/dsh-web-search
 - 只能通过环境变量或系统密钥库注入密钥；不提供明文文件回退。
 - 响应体按解压后字节计数上限，超限立即中止请求，不返回部分结果。
 - 冷却状态只保存 HMAC 作用域与冷却元数据，目录 `0700`、文件 `0600`。
+- 搜索失败、超时或取消后也尝试保存已记录的冷却；收尾最多等待 250 毫秒，保存异常不替换原始搜索错误。
 - 额度预检只回答「当前是否付得起」，不能证明账户免费，也不提供跨进程账单硬上限。
 - 抓取拒绝私有段、回环、链路本地与云元数据地址，不执行网页脚本，不携带 Cookie。
 - 两个宿主的单元测试全部离线；这不等于真实桌面安装、真实密钥库写入或服务商网络验收。
@@ -145,6 +152,12 @@ npm pack --dry-run
 ```
 
 Pi 用例通过 `jiti` 直接加载 `src/` 下的源码，因此需要本机装有 Pi（提供 `jiti` 与 `typebox`）。CI 会先安装 `@earendil-works/pi-coding-agent` 再运行。
+
+`npm run test:hosts` 默认检查开发基线，也可传入多个隔离宿主的依赖目录；按各自实际的 Cordis／网页服务接口运行，不以版本字符串决定行为：
+
+```bash
+npm run test:hosts -- <server_path>/legacy/node_modules <server_path>/current/node_modules
+```
 
 `npm run smoke` 是手动匿名网络检查，不进入持续集成，不使用密钥或计费通道。
 
