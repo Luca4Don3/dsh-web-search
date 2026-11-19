@@ -41,7 +41,7 @@ dsh plugin --profile <profile> add link:<server_path>/dsh-web-search
 
 `cordis.patch.yml` 会同时启用 `free-first`（搜索）与 `local-first`（抓取）。抓取提供方使用独立 id，因为官方插件已占用 `http`；若你已有自定义 `fetchProvider`，请保留你的选择。
 
-宿主依赖使用有边界的兼容范围，不再锁定单个 Cordis 版本：支持 `^4.0.5`，网页服务覆盖既有 `0.2.1-rc.2` 与 `0.2.2` 预发布系列。运行时直接使用宿主的搜索／抓取注册接口；缺少必要接口时明确报告 `WEB_SEARCH_UNSUPPORTED_HOST`，不自动安装、升级或替换宿主依赖。兼容范围不等于所有未来版本都已验收，仍需运行宿主矩阵测试；开发锁文件只固定可复现的测试基线。
+自 v0.3.3 起，`engines.dsh` 与 `@deepseek-ai/dsh-web` peer 收敛为**已逐版本代码级验证的精确枚举**（当前 `0.2.2-rc.1` 至 `rc.5`）：安装器按 DSH 官方 `evaluatePluginCompatibility`（`includePrerelease`）检查，装了未适配的 DSH 版本（如未来 rc.6、`0.2.2` 正式版）会被明确拒绝，需先跑宿主矩阵验收并发布新枚举。Cordis 依赖保持 `^4.0.5`。运行时直接使用宿主的搜索／抓取注册接口；缺少必要接口时明确报告 `WEB_SEARCH_UNSUPPORTED_HOST`，不自动安装、升级或替换宿主依赖。开发锁文件只固定可复现的测试基线。
 
 宿主矩阵验收（2026-11-19）：`scripts/test-dsh-hosts.mjs` 对官方 Web `0.2.2-rc.1` 至 `rc.5`（Cordis `4.1.0`）逐一通过 10/10；使用实装 0.3.1 的 `lib`，每个 rc 为独立的隔离官方宿主目录。
 
