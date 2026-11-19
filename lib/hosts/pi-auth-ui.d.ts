@@ -9,7 +9,7 @@
  * @module pi-web-search-auth-ui
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type SecretStore } from "./credentials.js";
+import { type SecretStore } from "../auth/credentials.js";
 import { type RoutingStatus } from "../search/routing.js";
 /** 认证命令名。 */
 export declare const AUTH_COMMAND = "web-search-auth";

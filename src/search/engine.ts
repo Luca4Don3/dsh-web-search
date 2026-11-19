@@ -377,15 +377,17 @@ export function createSearchEngine(options: EngineOptions = {}, deps: SearchDepe
 	/** 构造本次调用的候选顺序：匿名永远先于计费，显式指定时只尝试该后端。 */
 	function candidatesFor(request: SearchRequest, allowBillable: boolean): RouteStep[] {
 		const provider = request.provider ?? "auto";
-		if (provider !== "auto" && !isProviderId(provider)) throw new Error("未知的搜索 provider");
+		if (provider !== "auto" && !isProviderId(provider)) throw new SearchError("INVALID_REQUEST");
 		const anonymous = provider === "auto"
 			? [...ANONYMOUS_PROVIDER_ORDER]
 			: getProviderMetadata(provider).supportedTiers.includes("anonymous") ? [provider] : [];
 		const billable: ProviderId[] = allowBillable
-			? provider === "auto" ? [...BILLABLE_PROVIDER_ORDER] : [provider]
+			? provider === "auto"
+				? [...BILLABLE_PROVIDER_ORDER]
+				: getProviderMetadata(provider).supportedTiers.includes("billable") ? [provider] : []
 			: [];
 		if (!allowBillable && provider !== "auto" && anonymous.length === 0) {
-			throw new Error(`${provider} 已被禁用：需要显式授权可能计费的通道`);
+			throw new SearchError("INVALID_CONFIG", `${provider} 已被禁用：需要显式授权可能计费的通道`);
 		}
 		return [
 			...anonymous.map((backend) => ({ backend, channel: "free" as const })),

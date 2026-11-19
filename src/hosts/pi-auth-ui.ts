@@ -21,9 +21,9 @@ import {
 	type BackendStatus,
 	probeBackendStatus,
 	safeDiagnostic,
-} from "./resolve.js";
-import { isValidSecretValue, type SecretStore } from "./credentials.js";
-import { MaskedInput } from "./masked-input.js";
+} from "../auth/resolve.js";
+import { isValidSecretValue, type SecretStore } from "../auth/credentials.js";
+import { MaskedInput } from "./pi-masked-input.js";
 import { getRoutingStatus, type RoutingStatus } from "../search/routing.js";
 
 /** 认证命令名。 */

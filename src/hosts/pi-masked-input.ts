@@ -8,7 +8,7 @@ import {
 	type Component,
 	type Focusable,
 } from "@earendil-works/pi-tui";
-import { isValidSecretValue, MAX_SECRET_CHARS } from "./credentials.js";
+import { isValidSecretValue, MAX_SECRET_CHARS } from "../auth/credentials.js";
 
 /**
  * xterm 的 modifyOtherKeys 协议：`ESC [ 27 ; modifier ; codepoint ~`。

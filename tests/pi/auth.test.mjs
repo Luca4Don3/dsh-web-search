@@ -476,9 +476,9 @@ test("auth-ui: 删除流程给出成功 / 未找到 / 失败诊断", async () =>
 
 // 16. 生产认证 UI 实际使用掩码组件，不使用普通 Input；index 委托注册认证命令。
 test("生产认证 UI 引用 MaskedInput 且不使用普通 Input", () => {
-	const authUi = readFileSync(new URL("../../src/auth/ui.ts", import.meta.url), "utf8");
+	const authUi = readFileSync(new URL("../../src/hosts/pi-auth-ui.ts", import.meta.url), "utf8");
 	const index = readFileSync(new URL("../../src/hosts/pi.ts", import.meta.url), "utf8");
-	assert.match(authUi, /from ["']\.\/masked-input\.js["']/u);
+	assert.match(authUi, /from ["']\.\/pi-masked-input\.js["']/u);
 	assert.ok(!/\bnew\s+Input\b|\bui\.input\s*\(/u.test(authUi), "认证 UI 不应退化为普通 Input");
 	assert.ok(!/\bundo\b/iu.test(authUi), "认证 UI 不应暴露撤销输入组件");
 	assert.match(index, /registerAuthCommand/u);

@@ -19,7 +19,7 @@ for (const key of [
 }
 
 const jiti = createJiti(import.meta.url);
-const { MaskedInput } = await jiti.import(fileURLToPath(new URL("../../src/auth/masked-input.ts", import.meta.url)));
+const { MaskedInput } = await jiti.import(fileURLToPath(new URL("../../src/hosts/pi-masked-input.ts", import.meta.url)));
 const { visibleWidth } = await jiti.import("@earendil-works/pi-tui");
 
 const PASTE_START = "\x1b[200~";
@@ -155,6 +155,6 @@ test("MaskedInput：取消或 dispose 后 render 不含明文及残留掩码", (
 });
 
 test("生产 MaskedInput 不依赖普通 Input 或 undo", () => {
-	const source = readFileSync(new URL("../../src/auth/masked-input.ts", import.meta.url), "utf8");
+	const source = readFileSync(new URL("../../src/hosts/pi-masked-input.ts", import.meta.url), "utf8");
 	assert.ok(!/\bnew\s+Input\b|\.undo\s*\(/u.test(source));
 });

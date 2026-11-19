@@ -283,12 +283,19 @@ export function createPlugin(dependencies: { fetch?: typeof globalThis.fetch; en
 				PI_WEB_FETCH_MAX_REDIRECTS: String(config.fetchMaxRedirects ?? 3),
 			});
 			const fetcher = new LocalFirstFetchProvider(fetchConfig);
-			let unregisterSearch: () => void;
-			let unregisterFetch: () => void;
+			let unregisterSearch: (() => void) | undefined;
+			let unregisterFetch: (() => void) | undefined;
 			try {
 				unregisterSearch = web.registerSearchProvider(provider);
 				unregisterFetch = web.registerFetchProvider(fetcher);
 			} catch (error) {
+				// 注册表不能留下「已注册但已 dispose」的死提供方：fetch 注册失败时
+				// 先撤销已成功的 search 注册，再释放两个实例。
+				try {
+					unregisterSearch?.();
+				} catch {
+					// 撤销失败不掩盖原始错误。
+				}
 				void provider.dispose().catch(() => undefined);
 				fetcher.dispose();
 				throw error;
@@ -301,8 +308,8 @@ export function createPlugin(dependencies: { fetch?: typeof globalThis.fetch; en
 			// 告警，把「看起来装了、其实没用」变成可见的诊断。
 			warnIfNotSelected(ctx, web);
 			ctx.effect(() => async () => {
-				unregisterSearch();
-				unregisterFetch();
+				unregisterSearch?.();
+				unregisterFetch?.();
 				await provider.dispose();
 				fetcher.dispose();
 			}, "web-search.lifecycle");
